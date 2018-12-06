@@ -1,6 +1,6 @@
 // 1D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git
+// git -master
 
 // set initial condition
 // evaluate derivatives of correction function at gauss legendre points and store
