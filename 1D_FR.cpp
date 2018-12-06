@@ -2,6 +2,8 @@
 // Semih Akkurt
 // git -master
 
+// start doint dynamic memory
+
 // set initial condition
 // evaluate derivatives of correction function at gauss legendre points and store
 // compute F_D left and right lagrange fit evaluation constants
