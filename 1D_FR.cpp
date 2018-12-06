@@ -20,8 +20,14 @@
 #include <math.h>
 #include <cmath>
 
+
+struct essential {
+  double dt, jacob, columnL;
+  int nVar, pOrder, nElem, maxIte;
+} ;
+
 const int nvar=1;
-const int porder=2;
+const int porder=1;
 const int nelem=1000;
 
 const double gammaVal=1.4;
@@ -47,7 +53,11 @@ void dene(double* base)
 std::cout << base[4] << "\n";
 }
 
-
+void st(essential* param)
+{
+std::cout << "struct param\n";
+std::cout << param->dt << std::endl;
+}
 
 int main()
 {
@@ -64,6 +74,25 @@ int main()
   double hL[porder+1], hR[porder+1];
   set_correctionDerivs(soln_coords, hL, hR);
 
+
+  double L, jacob, dt;
+  L = 10;
+  essential params;
+
+  params.nVar   = 1;
+  params.pOrder = 0;
+  params.dt     = 0.01;
+  params.nElem  = 1000;
+  params.maxIte = 10000;
+  params.columnL = params.nVar*params.nElem;
+  params.jacob  = L/params.nElem/2;
+  //st(&params);
+  //essential *pointEs;
+
+  //pointEs = new essential;
+  //pointEs->dt = 0.1;
+  //std::cout << pointEs->dt << std::endl;
+
   //dene(&lagrDerivs[1][2]);
 
   // solution arrays, array of structures
@@ -73,8 +102,6 @@ int main()
   int maxite = 100000;
   std::cout << "max ite " << maxite << std::endl;
 
-  double L, jacob, dt;
-  L = 10;
   jacob = L/nelem/2;
   dt = 0.0001;//0.0011270166538
 
