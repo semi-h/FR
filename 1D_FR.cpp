@@ -26,18 +26,14 @@ struct essential {
   int nvar, porder, nelem, columnL, maxIte;
 } ;
 
-const int nvar=1;
-const int porder=1;
-const int nelem=1000;
-
 const double gammaVal=1.4;
 
 void set_solnPoints(int p, double **soln_coords, double **weights);
 void set_lagrangeDerivs(int p, double *soln_coords, double **derivs);
 void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, double **lagrInterR);
 void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
-void get_flux(double (&q)[nvar], double (&flux)[nvar]);
-void roe_flux(double (&q_L)[nvar], double (&q_R)[nvar], double (&fluxI)[nvar]);
+void get_flux(double *nvar, double *flux);
+void roe_flux(double *q_L, double *q_R, double *fluxI);
 
 void superFunc( essential* params, double *u, double *f, double *u_LR, double *f_LR, 
                 double *lagrInterL, double *lagrInterR );
@@ -66,7 +62,7 @@ int main()
   params.porder = 2;
   params.dt     = 0.0001;
   params.nelem  = 1000;
-  params.maxIte = 100000;
+  params.maxIte = 1000000;
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
   //st(&params);
@@ -243,7 +239,7 @@ int main()
 
 
 
-void get_flux(double (&q)[nvar], double (&flux)[nvar])
+void get_flux(double *q, double *flux)
 {
   double u, p;
 
@@ -255,7 +251,7 @@ void get_flux(double (&q)[nvar], double (&flux)[nvar])
   return;
 }
 
-void roe_flux(double (&q_L)[nvar], double (&q_R)[nvar], double (&fluxI)[nvar])
+void roe_flux(double *q_L, double *q_R, double *fluxI)
 {
 
   double p_L, p_R, H_L, H_R;
@@ -274,14 +270,14 @@ void roe_flux(double (&q_L)[nvar], double (&q_R)[nvar], double (&fluxI)[nvar])
   a_hat   = sqrt((gammaVal-1)*(H_hat-0.5*pow(u_hat,2)));
 
   double lambda[3] = {u_hat, u_hat + a_hat, u_hat - a_hat};
-  for ( int i = 0; i < nvar; i++ ) lambda[i] = std::abs(lambda[i]);
+  for ( int i = 0; i < 3; i++ ) lambda[i] = std::abs(lambda[i]);
 
-  double r_eig[nvar][nvar];
+  double r_eig[3][3];
   r_eig[0][0] = 1; r_eig[0][1] = 1; r_eig[0][2] = 1;
   r_eig[1][0] = u_hat; r_eig[1][1] = u_hat+a_hat; r_eig[1][2] = u_hat-a_hat;
   r_eig[2][0] = 0.5*pow(u_hat,2); r_eig[2][1] = H_hat+a_hat*u_hat; r_eig[2][2] = H_hat-a_hat*u_hat;
 
-  double w0[nvar];
+  double w0[3];
   w0[0] =-(p_R-p_L)/(2*a_hat*a_hat) + q_R[0] - q_L[0];
   w0[1] = (p_R-p_L)/(2*a_hat*a_hat)
         + (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
@@ -289,12 +285,12 @@ void roe_flux(double (&q_L)[nvar], double (&q_R)[nvar], double (&fluxI)[nvar])
         - (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
 
 
-  double flux_L[nvar], flux_R[nvar], diss[nvar];
+  double flux_L[3], flux_R[3], diss[3];
 
-  for ( int i = 0; i < nvar; i++ )
+  for ( int i = 0; i < 3; i++ )
   {
     diss[i] = 0;
-    for ( int j = 0; j < nvar; j++ )
+    for ( int j = 0; j < 3; j++ )
     {
       diss[i] += r_eig[i][j]*lambda[j]*w0[j];
     }
@@ -302,9 +298,9 @@ void roe_flux(double (&q_L)[nvar], double (&q_R)[nvar], double (&fluxI)[nvar])
 
   get_flux(q_L, flux_L);
   get_flux(q_R, flux_R);
-  fluxI[0] = 0.5*(flux_L[0] + flux_R[0] - diss[0]);
-  fluxI[1] = 0.5*(flux_L[1] + flux_R[1] - diss[1]);
-  fluxI[2] = 0.5*(flux_L[2] + flux_R[2] - diss[2]);
+  for ( int i = 0; i < 3; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - diss[i]);
+  //fluxI[1] = 0.5*(flux_L[1] + flux_R[1] - diss[1]);
+  //fluxI[2] = 0.5*(flux_L[2] + flux_R[2] - diss[2]);
 
   return;
 }
@@ -439,10 +435,10 @@ void computeFlux(essential* params, double *u_LR, double *f_LR)
     }
   }
   //for one variable advection periodic;
-  u_R[0] = u_LR[params->columnL + nelem-1]; //very right
+  u_R[0] = u_LR[params->columnL + params->nelem-1]; //very right
   u_L[0] = u_LR[0]; //very left
   f_I[0] = u_R[0];
-  f_LR[params->columnL + nelem-1] = f_I[0] - f_LR[params->columnL + nelem-1];
+  f_LR[params->columnL + params->nelem-1] = f_I[0] - f_LR[params->columnL + params->nelem-1];
   f_LR[0] = f_I[0] - f_LR[0];
   return;
 }
