@@ -64,9 +64,9 @@ int main()
 
   params.nvar   = 1;
   params.porder = 2;
-  params.dt     = 0.01;
+  params.dt     = 0.0001;
   params.nelem  = 1000;
-  params.maxIte = 10000;
+  params.maxIte = 100000;
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
   //st(&params);
