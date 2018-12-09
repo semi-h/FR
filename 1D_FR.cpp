@@ -1,6 +1,6 @@
 // 1D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git - master
+// git - master/runge-kutta
 
 // start doint dynamic memory
 
@@ -41,16 +41,7 @@ void update( essential *params, double *u, double *f, double *f_LR, double *lagr
              double *hL, double *hR );
 void computeFlux(essential* params, double *u_LR, double *f_LR);
 
-void dene(double* base)
-{
-std::cout << base[4] << "\n";
-}  //dene(&lagrDerivs[1][2]);
 
-void st(essential* param)
-{
-std::cout << "struct param\n";
-std::cout << param->dt << std::endl;
-}
 
 int main()
 {
