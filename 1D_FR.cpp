@@ -1,6 +1,6 @@
 // 1D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git - dynamicMemory
+// git - master
 
 // start doint dynamic memory
 
