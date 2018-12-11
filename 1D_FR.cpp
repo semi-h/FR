@@ -53,7 +53,7 @@ int main()
   params.porder = 2;
   params.dt     = 0.0001;
   params.nelem  = 1000;
-  params.maxIte = 1000000;
+  params.maxIte = 100000;
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
 
@@ -173,7 +173,7 @@ int main()
     //for ( int j = 0; j < params.porder+1; j++ )
       //solution << u[j*params.columnL + i] << "\n";
   }
-/*
+
   //error
   double error = 0;
   double x, sigma=0.2, pi=3.141592653589793, mu=0;
@@ -189,8 +189,9 @@ int main()
     }
   }
 
-  std::cout << "error " << sqrt(error)/sqrt(params.nelem*(params.porder+1)) << "\n";
-*/
+  std::cout << "error " << log10(sqrt(error))/log10(sqrt(params.nelem*(params.porder+1))) << "\n";
+  std::cout << log10(L/params.nelem) << "\n";
+
   return 0;
 }
 
