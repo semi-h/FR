@@ -56,64 +56,43 @@ int main()
   params.maxIte = 1000000;
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
-  //st(&params);
-  //essential *pointEs;
-
-  //pointEs = new essential;
-  //pointEs->dt = 0.1;
-  //std::cout << pointEs->dt << std::endl;
 
 
   std::cout << "polynomial order is set " << params.porder << std::endl;
 
-  //double soln_coords[porder+1], weights[porder+1];
+
   double *soln_coords, *weights;
-  //std::cout << "hi there" << std::endl; 
   set_solnPoints(params.porder, &soln_coords, &weights);
-  //std::cout << "dene" << soln_coords[0];
+
   double *lagrDerivs;
   set_lagrangeDerivs(params.porder, soln_coords, &lagrDerivs);
   
-  //std::cout << lagrDerivs[0] << std::endl;
-
-  //double lagrInterL[porder+1], lagrInterR[porder+1];
   double *lagrInterL, *lagrInterR;
   set_lagrangeInterCoeffs(params.porder, soln_coords, &lagrInterL, &lagrInterR);
-  //double hL[porder+1], hR[porder+1];
+
   double *hL, *hR;
   set_correctionDerivs(params.porder, soln_coords, &hL, &hR);
 
 
-
   // solution arrays, array of structures
-  //double u[porder+1][nelem*nvar], f[porder+1][nelem*nvar];
-  //double u_LR[2][nelem*nvar], f_LR[2][nelem*nvar];
-
   double *u, *f, *u_LR, *f_LR;
   u = new double [(params.porder+1)*params.nelem*params.nvar];
   f = new double [(params.porder+1)*params.nelem*params.nvar];
   u_LR = new double [2*params.nelem*params.nvar];
   f_LR = new double [2*params.nelem*params.nvar];
 
-
-  //int maxite = 100000;
-  std::cout << "max ite " << params.maxIte << std::endl;
-
-  //jacob = L/nelem/2;
-  //dt = 0.0001;//0.0011270166538
-
+  std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
   std::cout << "dx: " << L/params.nelem << "\n";
   std::cout << "Lenght: " << L << "\n";
   std::cout << "jacob: " << params.jacob << "\n";
   std::cout << "dt: " << params.dt << "\n";
-  std::cout << "end time: " << params.maxIte*params.dt << "\n";
+  std::cout << "end time: " << params.maxIte*params.dt << std::endl;
 
 
   // Initialization
   double rho_0 = 1, u_0 = 0, p_0 = 1;
   double rho_1 = 0.125, u_1 = 0, p_1 = 0.1;
-
 
   if ( params.nvar == 3 )
   {
@@ -184,16 +163,6 @@ int main()
     //update solution
     update(&params, u, f, f_LR, lagrDerivs, hL, hR);
   }
-
-  //double q_L[nvar] = {1, 3, 4};
-  //double q_R[nvar] = {2, 4, 5};
-  //double fluxI[nvar];
-
-  //roe_flux(q_L, q_R, fluxI);
-
-  //std::cout << fluxI[0] << std::endl;
-
-  //std::cout << u[2][550] << std::endl;
 
 
   std::ofstream solution;
@@ -434,10 +403,6 @@ void computeFlux(essential* params, double *u_LR, double *f_LR)
   return;
 }
 
-//void update( double (&u)[porder+1][nelem*nvar], double (&f)[porder+1][nelem*nvar], 
-//             double (&f_LR)[2][nelem*nvar], 
-//             double (&lagrDerivs)[porder+1][porder+1], 
-//             double (&hL)[porder+1], double (&hR)[porder+1], double jacob, double dt )
 void update( essential *params, double *u, double *f, double *f_LR, double *lagrDerivs, 
              double *hL, double *hR )
 {
@@ -526,8 +491,7 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
   {
     std::cout << (*hL)[i] << " ";
   }
-  std::cout << "\n";
-  std::cout << "right correction coeffs\n";
+  std::cout << "\nright correction coeffs\n";
   for ( int i = 0; i < p+1; i++ )
   {
     std::cout << (*hR)[i] << " ";
