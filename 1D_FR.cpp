@@ -23,7 +23,7 @@
 
 struct essential {
   double dt, jacob;
-  int nvar, porder, nelem, columnL, maxIte;
+  int nvar, porder, nelem, columnL, maxIte, nRK;
 } ;
 
 const double gammaVal=1.4;
@@ -37,7 +37,8 @@ void roe_flux(double *q_L, double *q_R, double *fluxI);
 
 void superFunc( essential* params, double *u, double *f, double *u_LR, double *f_LR, 
                 double *lagrInterL, double *lagrInterR );
-void update( essential *params, double *u, double *f, double *f_LR, double *lagrDerivs, 
+void update( essential *params, double *u, double *du, 
+             double *f, double *f_LR, double *lagrDerivs, 
              double *hL, double *hR );
 void computeFlux(essential* params, double *u_LR, double *f_LR);
 
@@ -50,10 +51,11 @@ int main()
   essential params;
 
   params.nvar   = 1;
-  params.porder = 2;
-  params.dt     = 0.0001;
-  params.nelem  = 1000;
-  params.maxIte = 100000;
+  params.porder = 2; // 0 || 1 || 2 || 3
+  params.dt     = 0.00001;
+  params.nelem  = 2000;
+  params.maxIte = 1000000;
+  params.nRK = 1; //1 or 3
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
 
@@ -81,14 +83,34 @@ int main()
   u_LR = new double [2*params.nelem*params.nvar];
   f_LR = new double [2*params.nelem*params.nvar];
 
+  // 2N storage RK
+  double *du, *du_old;
+  du = new double [(params.porder+1)*params.nelem*params.nvar];
+  du_old = new double [(params.porder+1)*params.nelem*params.nvar];
+
   std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
   std::cout << "dx: " << L/params.nelem << "\n";
   std::cout << "Lenght: " << L << "\n";
   std::cout << "jacob: " << params.jacob << "\n";
   std::cout << "dt: " << params.dt << "\n";
+  std::cout << "RK stage: " << params.nRK << "\n";
   std::cout << "end time: " << params.maxIte*params.dt << std::endl;
 
+  double *RK_A, *RK_B;
+  RK_A = new double [params.nRK];
+  RK_B = new double [params.nRK];
+
+  if ( params.nRK == 1 )
+  {
+    RK_A[0] = 0;
+    RK_B[0] = 1;
+  }
+  else if ( params.nRK == 3 )
+  {
+    RK_A[0] = 0; RK_A[1] = -5.0/9.0; RK_A[2] = -153.0/128.0;
+    RK_B[0] = 1.0/3.0; RK_B[1] = 15.0/16.0; RK_A[2] = 8.0/15.0;
+  }
 
   // Initialization
   double rho_0 = 1, u_0 = 0, p_0 = 1;
@@ -105,7 +127,10 @@ int main()
     { //rowN*columnL + columnN
       //for ( int k = 0; k < nvar; k++ ) u[j][i+k*nelem] = q[k];
       for ( int k = 0; k < params.nvar; k++ )
+      {
         u[j*params.columnL + i+k*params.nelem] = q[k];
+        du[j*params.columnL + i+k*params.nelem] = 0;
+      }
     }
   }
   std::cout << "right side\n";
@@ -115,7 +140,10 @@ int main()
     for ( int j = 0; j < params.porder+1; j++ ) 
     {
       for ( int k = 0; k < params.nvar; k++ )
+      {
         u[j*params.columnL + i+k*params.nelem] = q[k];
+        du[j*params.columnL + i+k*params.nelem] = 0;
+      }
     }
   }
   }
@@ -132,6 +160,7 @@ int main()
     {
     x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
     u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
+    du[j*params.columnL + i] = 0;
     }
   }
   }
@@ -140,28 +169,38 @@ int main()
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    //std::cout << "ite: " << ite << " ";
-    //superFunc creates f, u_LR, and f_LR arrays
-    superFunc(&params, u, f, u_LR, f_LR, lagrInterL, lagrInterR);
+    for ( int i = 0; i < params.columnL*(params.porder+1); i++ ) du[i] = 0;
+    for ( int i = 0; i < params.nRK; i ++ )
+    {
+      //std::cout << "ite: " << ite << " ";
+      //superFunc creates f, u_LR, and f_LR arrays
+      superFunc(&params, u, f, u_LR, f_LR, lagrInterL, lagrInterR);
 
-    //call flux function for each colocated uL uR pair of 2 neighbour elements
-    // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
-    //DO SOMETHING
-    computeFlux(&params, u_LR, f_LR);
+      //call flux function for each colocated uL uR pair of 2 neighbour elements
+      // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
+      computeFlux(&params, u_LR, f_LR);
 
 
-    // NO BC
-    //q[0] = rho_0; q[1] = rho_0*u_0; q[2] = p_0/(gammaVal-1) + 0.5*rho_0*pow(u_0,2);
-    //get_flux(q,flux);
-    //for ( int i = 0; i < nvar; i++ ) f_LR[0][i*nelem] = 0;//flux[i];
-    //q[0] = rho_1; q[1] = rho_1*u_1; q[2] = p_1/(gammaVal-1) + 0.5*rho_1*pow(u_1,2);
-    //get_flux(q,flux);
-    //for ( int i = 0; i < nvar; i++ ) f_LR[1][(i+1)*nelem-1] = 0;//flux[i];
-    //f_LR[0][0] = 0; f_LR[0][nelem] = 0; f_LR[0][2*nelem] = 0;
-    //f_LR[1][nelem-1] = 0; f_LR[1][2*nelem-1] = 0; f_LR[1][3*nelem-1] = 0;
+      // NO BC
+      //q[0] = rho_0; q[1] = rho_0*u_0; q[2] = p_0/(gammaVal-1) + 0.5*rho_0*pow(u_0,2);
+      //get_flux(q,flux);
+      //for ( int i = 0; i < nvar; i++ ) f_LR[0][i*nelem] = 0;//flux[i];
+      //q[0] = rho_1; q[1] = rho_1*u_1; q[2] = p_1/(gammaVal-1) + 0.5*rho_1*pow(u_1,2);
+      //get_flux(q,flux);
+      //for ( int i = 0; i < nvar; i++ ) f_LR[1][(i+1)*nelem-1] = 0;//flux[i];
+      //f_LR[0][0] = 0; f_LR[0][nelem] = 0; f_LR[0][2*nelem] = 0;
+      //f_LR[1][nelem-1] = 0; f_LR[1][2*nelem-1] = 0; f_LR[1][3*nelem-1] = 0;
 
-    //update solution
-    update(&params, u, f, f_LR, lagrDerivs, hL, hR);
+      //update solution
+      update(&params, u, du, f, f_LR, lagrDerivs, hL, hR);
+
+      for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
+      {
+        du_old[j] = du[j];
+        du[j] = RK_A[i]*du_old[j] + params.dt*du[j];
+        u[j] += RK_B[i]*du[j];
+      }
+    }
   }
 
 
@@ -189,7 +228,7 @@ int main()
     }
   }
 
-  std::cout << "error " << log10(sqrt(error))/log10(sqrt(params.nelem*(params.porder+1))) << "\n";
+  std::cout << "error " << log10(sqrt(error)/sqrt(params.nelem*(params.porder+1))) << "\n";
   std::cout << log10(L/params.nelem) << "\n";
 
   return 0;
@@ -279,7 +318,7 @@ void set_solnPoints(int p, double **soln_coords, double **weights)
     (*soln_coords)[0] = 0;
     (*weights)[0] = 2.0;
   }
-  if ( p == 1 )
+  else if ( p == 1 )
   {
     (*soln_coords)[0] =-0.577350269189625764509148780502;
     (*soln_coords)[1] = 0.577350269189625764509148780502;
@@ -404,12 +443,12 @@ void computeFlux(essential* params, double *u_LR, double *f_LR)
   return;
 }
 
-void update( essential *params, double *u, double *f, double *f_LR, double *lagrDerivs, 
+void update( essential *params, double *u, double *du, 
+             double *f, double *f_LR, double *lagrDerivs, 
              double *hL, double *hR )
 {
 
-  //double dummy[porder+1];
-  double *dummy = new double[params->porder];
+  double *dummy = new double[params->porder+1];
 
   for ( int i = 0; i < params->columnL; i++ )
   {
@@ -426,7 +465,8 @@ void update( essential *params, double *u, double *f, double *f_LR, double *lagr
     //for ( int j = 0; j < params->porder+1; j++ ) f[j][i] = dummy[j];
     //update
     for ( int j = 0; j < params->porder+1; j++ )
-      u[j*params->columnL+i] -= dummy[j]*params->dt/params->jacob;
+      //u[j*params->columnL+i] -= dummy[j]*params->dt/params->jacob;
+      du[j*params->columnL+i] = -dummy[j]/params->jacob;
   }
 
   return;
@@ -473,14 +513,18 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
   {
     (*hL)[0] = -0.5;
   }
+  else if ( p == 1 )
+  {
+    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = -0.5;
+  }
   else if ( p == 2 )
   {
-  for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 1.5*soln_coords[i] - 0.5;
+    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 1.5*soln_coords[i] - 0.5;
   }
   else if ( p == 3 )
   {
-  for ( int i = 0; i < p+1; i++ ) 
-    (*hL)[i] = 0.25*(-15.0*pow(soln_coords[i],2)+6.0*soln_coords[i]+3.0);
+    for ( int i = 0; i < p+1; i++ ) 
+      (*hL)[i] = 0.25*(-15.0*pow(soln_coords[i],2)+6.0*soln_coords[i]+3.0);
   }
 
   // uncomment below to set all 0.5 and -..
