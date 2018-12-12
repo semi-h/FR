@@ -199,9 +199,6 @@ int main()
 
       for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
       {
-        //du_old[j] = du[j];
-        //du[j] = RK_A[i]*du_old[j] + params.dt*du[j];
-        //u[j] += RK_B[i]*du[j];
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
     }
