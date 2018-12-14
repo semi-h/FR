@@ -1,6 +1,6 @@
 // 1D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git - master/runge-kutta
+// git - master/2D
 
 // start doint dynamic memory
 
@@ -22,8 +22,8 @@
 
 
 struct essential {
-  double dt, jacob;
-  int nvar, porder, nelem, columnL, maxIte, nRK;
+  double dt, jacob, ndim;
+  int nvar, porder, nelem, columnL, maxIte, nRK, nse, nfe;
 } ;
 
 const double gammaVal=1.4;
@@ -35,11 +35,11 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
 void get_flux(double *nvar, double *flux);
 void roe_flux(double *q_L, double *q_R, double *fluxI);
 
-void superFunc( essential* params, double *u, double *f, double *u_LR, double *f_LR, 
+void superFunc( essential* params, double *u, double *f, double *u_face, double *f_face, 
                 double *lagrInterL, double *lagrInterR );
-void update( essential *params, double *u, double *f, double *f_LR, 
+void update( essential *params, double *u, double *f, double *f_face, 
              double *lagrDerivs, double *hL, double *hR );
-void computeFlux(essential* params, double *u_LR, double *f_LR);
+void computeFlux(essential* params, double *u_face, double *f_face);
 
 
 
@@ -49,17 +49,17 @@ int main()
   L = 10;
   essential params;
 
-  params.nvar   = 1;
-  params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.00001;
-  params.nelem  = 1000;
-  params.maxIte = 1000000;
+  params.ndim   = 2;
+  params.nvar   = 4;
+  params.porder = 2; // 0 || 1 || 2 || 3
+  params.nse    = pow(params.porder+1,2);
+  params.nfe    = 4*(params.porder+1); //only for quad
+  params.dt     = 0.0001;
+  params.nelem  = 10000;
+  params.maxIte = 10;
   params.nRK = 4; //1 or 3
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
-
-
-  std::cout << "polynomial order is set " << params.porder << std::endl;
 
 
   double *soln_coords, *weights;
@@ -67,7 +67,7 @@ int main()
 
   double *lagrDerivs;
   set_lagrangeDerivs(params.porder, soln_coords, &lagrDerivs);
-  
+
   double *lagrInterL, *lagrInterR;
   set_lagrangeInterCoeffs(params.porder, soln_coords, &lagrInterL, &lagrInterR);
 
@@ -76,16 +76,21 @@ int main()
 
 
   // solution arrays, array of structures
-  double *u, *f, *u_LR, *f_LR;
-  u = new double [(params.porder+1)*params.nelem*params.nvar];
-  f = new double [(params.porder+1)*params.nelem*params.nvar];
-  u_LR = new double [2*params.nelem*params.nvar];
-  f_LR = new double [2*params.nelem*params.nvar];
+  double *u, *f, *u_face, *f_face;
+  u = new double [params.nse*params.columnL];
+  f = new double [params.nse*params.columnL];
+  u_face = new double [params.nfe*params.columnL];
+  f_face = new double [params.nfe*params.columnL];
 
   // 2N storage RK
   double *old_u;
-  old_u = new double [(params.porder+1)*params.nelem*params.nvar];
+  old_u = new double [params.nse*params.columnL];
 
+  std::cout << "ndim: " << params.ndim << "\n";
+  std::cout << "polynomial order is: " << params.porder << "\n";
+  std::cout << "number of solution points per element: " << params.nse << "\n";
+  std::cout << "number of face points per element: " << params.nfe << "\n";
+  std::cout << "nvar: " << params.nvar << "\n";
   std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
   std::cout << "dx: " << L/params.nelem << "\n";
@@ -156,48 +161,42 @@ int main()
   std::cout << "Advection solver\n";
   double x, sigma=0.2, pi=3.141592653589793, mu=0;
   std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
-  for ( int i = 0; i < params.nelem; i++ )
-  {
-    //x = i*L/nelem-5;
-    for ( int j = 0; j < params.porder+1; j++ )
+    for ( int i = 0; i < params.nelem; i++ )
     {
-    x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
-    u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
-    old_u[j*params.columnL + i] = 0;
+      //x = i*L/nelem-5;
+      for ( int j = 0; j < params.porder+1; j++ )
+      {
+      x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
+      u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
+      old_u[j*params.columnL + i] = 0;
+      }
     }
   }
+  else if ( params.nvar == 4 )
+  {
+    double rho_inf = 1, u_inf = 1, v_inf = 0, p_inf = 1;
   }
 
   std::cout << "main loop begins\n";
+
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    for ( int i = 0; i < params.columnL*(params.porder+1); i++ ) old_u[i] = u[i];
+    for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
       //std::cout << "ite: " << ite << " ";
-      //superFunc creates f, u_LR, and f_LR arrays
-      superFunc(&params, u, f, u_LR, f_LR, lagrInterL, lagrInterR);
+      //superFunc creates f, u_face, and f_face arrays
+      superFunc(&params, u, f, u_face, f_face, lagrInterL, lagrInterR);
 
       //call flux function for each colocated uL uR pair of 2 neighbour elements
-      // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
-      computeFlux(&params, u_LR, f_LR);
-
-
-      // NO BC
-      //q[0] = rho_0; q[1] = rho_0*u_0; q[2] = p_0/(gammaVal-1) + 0.5*rho_0*pow(u_0,2);
-      //get_flux(q,flux);
-      //for ( int i = 0; i < nvar; i++ ) f_LR[0][i*nelem] = 0;//flux[i];
-      //q[0] = rho_1; q[1] = rho_1*u_1; q[2] = p_1/(gammaVal-1) + 0.5*rho_1*pow(u_1,2);
-      //get_flux(q,flux);
-      //for ( int i = 0; i < nvar; i++ ) f_LR[1][(i+1)*nelem-1] = 0;//flux[i];
-      //f_LR[0][0] = 0; f_LR[0][nelem] = 0; f_LR[0][2*nelem] = 0;
-      //f_LR[1][nelem-1] = 0; f_LR[1][2*nelem-1] = 0; f_LR[1][3*nelem-1] = 0;
+      // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
+      //computeFlux(&params, u_face, f_face);
 
       //update solution
-      update(&params, u, f, f_LR, lagrDerivs, hL, hR);
+      //update(&params, u, f, f_face, lagrDerivs, hL, hR);
 
-      for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
@@ -205,6 +204,9 @@ int main()
   }
 
 
+
+/*
+  // print solution out
   std::ofstream solution;
   solution.open("solution");
   for ( int i = 0; i < params.nelem; i++ )
@@ -213,7 +215,9 @@ int main()
     //for ( int j = 0; j < params.porder+1; j++ )
       //solution << u[j*params.columnL + i] << "\n";
   }
+*/
 
+/*
   //error
   double error = 0;
   double x, sigma=0.2, pi=3.141592653589793, mu=0;
@@ -231,8 +235,122 @@ int main()
 
   std::cout << "error " << log10(sqrt(error)/sqrt(params.nelem*(params.porder+1))) << "\n";
   std::cout << log10(L/params.nelem) << "\n";
-
+*/
   return 0;
+}
+
+
+
+
+void superFunc( essential* params, double *u, double *f, double *u_face, double *f_face, 
+                double *lagrInterL, double *lagrInterR )
+{
+
+  //int loc_q[nvar];
+  int *loc_q = new int[params->nvar];
+
+  double vel, p;
+
+  for ( int i = 0; i < params->nelem; i++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i+j*params->nelem; //column pos
+    for ( int j = 0; j < params->nvar; j++ )
+    {
+      for ( int k = 0; k < params->nfe; k++ )
+      {
+        u_face[params->columnL*k + loc_q[j]] = 0; f_face[params->columnL*k + loc_q[j]] = 0;
+      }
+    }
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      for ( int k = 0; k < params->nvar; k++ )
+      {
+        u_face[loc_q[k]]                   += u[j*params->columnL + loc_q[k]]*lagrInterL[j];
+        u_face[params->columnL + loc_q[k]] += u[j*params->columnL + loc_q[k]]*lagrInterR[j];
+      }
+      // euler
+      /*
+      f[j][loc_q[0]] = u[j][loc_q[1]];
+      vel = u[j][loc_q[1]]/u[j][loc_q[0]];
+      p = (gammaVal-1)*(u[j][loc_q[2]]-0.5*u[j][loc_q[1]]*vel);
+      f[j][loc_q[1]] = u[j][loc_q[1]]*vel + p;
+      f[j][loc_q[2]] = (u[j][loc_q[2]]+p)*vel;
+      */
+      // advection with a=1
+      f[j*params->columnL + loc_q[0]] = 1*u[j*params->columnL + loc_q[0]];
+      for ( int k = 0; k < params->nvar; k++ )
+      {
+        f_face[loc_q[k]]                   += f[j*params->columnL + loc_q[k]]*lagrInterL[j];
+        f_face[params->columnL + loc_q[k]] += f[j*params->columnL + loc_q[k]]*lagrInterR[j];
+      }
+    }
+  }
+
+  return;
+}
+
+void computeFlux(essential* params, double *u_face, double *f_face)
+{
+
+  //int loc_q[nvar];
+  //double u_L[nvar], u_R[nvar], f_I[nvar];
+  int *loc_q = new int[params->nvar];
+  double *u_L = new double[params->nvar];
+  double *u_R = new double[params->nvar];
+  double *f_I = new double[params->nvar];
+
+  for ( int i = 0; i < params->nelem-1; i++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i+j*params->nelem;
+    for ( int j = 0; j < params->nvar; j++ )
+    {
+      u_R[j] = u_face[1*params->columnL + loc_q[j]];
+      u_L[j] = u_face[loc_q[j]+1]; //left of the next element
+    }
+    //roe_flux(u_R, u_L, f_I); // normal direction to right
+    //lax_friedrich
+    f_I[0] = u_R[0]; //pure upwind
+    for ( int j = 0; j < params->nvar; j++ )
+    {
+      f_face[1*params->columnL + loc_q[j]] = f_I[j] - f_face[1*params->columnL + loc_q[j]];
+      f_face[loc_q[j]+1] = f_I[j] - f_face[loc_q[j]+1]; //left of the next element
+    }
+  }
+  //for one variable advection periodic;
+  u_R[0] = u_face[params->columnL + params->nelem-1]; //very right
+  u_L[0] = u_face[0]; //very left
+  f_I[0] = u_R[0];
+  f_face[params->columnL + params->nelem-1] = f_I[0] - f_face[params->columnL + params->nelem-1];
+  f_face[0] = f_I[0] - f_face[0];
+  return;
+}
+
+void update( essential *params, double *u, double *f, double *f_face, 
+             double *lagrDerivs, double *hL, double *hR )
+{
+
+  double *dummy = new double[params->porder+1];
+
+  for ( int i = 0; i < params->columnL; i++ )
+  {
+    for ( int j = 0; j < params->porder+1; j++ ) dummy[j] = 0;
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      for ( int k = 0; k < params->porder+1; k++ )
+      {
+        dummy[j] += lagrDerivs[j*(params->porder+1)+k]*f[k*params->columnL+i];
+      }
+      //dummy[j] += hL[j]*f_face[0][i] + hR[j]*f_face[1][i];
+      dummy[j] += hL[j]*f_face[i] + hR[j]*f_face[params->columnL+i];
+    }
+    //for ( int j = 0; j < params->porder+1; j++ ) f[j][i] = dummy[j];
+    //update
+    for ( int j = 0; j < params->porder+1; j++ )
+      //u[j*params->columnL+i] -= dummy[j]*params->dt/params->jacob;
+      u[j*params->columnL+i] = -dummy[j]/params->jacob;
+  }
+
+  return;
 }
 
 
@@ -362,116 +480,6 @@ void set_solnPoints(int p, double **soln_coords, double **weights)
   std::cout << std::endl;
   return;
 }
-
-void superFunc( essential* params, double *u, double *f, double *u_LR, double *f_LR, 
-                double *lagrInterL, double *lagrInterR )
-{
-
-  //int loc_q[nvar];
-  int *loc_q = new int[params->nvar];
-
-  double vel, p;
-
-  for ( int i = 0; i < params->nelem; i++ )
-  {
-    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i+j*params->nelem;
-    for ( int k = 0; k < params->nvar; k++ )
-    {
-      u_LR[loc_q[k]] = 0; u_LR[params->columnL + loc_q[k]] = 0;
-      f_LR[loc_q[k]] = 0; f_LR[params->columnL + loc_q[k]] = 0;
-    }
-    for ( int j = 0; j < params->porder+1; j++ )
-    {
-      for ( int k = 0; k < params->nvar; k++ )
-      {
-        u_LR[loc_q[k]]                   += u[j*params->columnL + loc_q[k]]*lagrInterL[j];
-        u_LR[params->columnL + loc_q[k]] += u[j*params->columnL + loc_q[k]]*lagrInterR[j];
-      }
-      // euler
-      /*
-      f[j][loc_q[0]] = u[j][loc_q[1]];
-      vel = u[j][loc_q[1]]/u[j][loc_q[0]];
-      p = (gammaVal-1)*(u[j][loc_q[2]]-0.5*u[j][loc_q[1]]*vel);
-      f[j][loc_q[1]] = u[j][loc_q[1]]*vel + p;
-      f[j][loc_q[2]] = (u[j][loc_q[2]]+p)*vel;
-      */
-      // advection with a=1
-      f[j*params->columnL + loc_q[0]] = 1*u[j*params->columnL + loc_q[0]];
-      for ( int k = 0; k < params->nvar; k++ )
-      {
-        f_LR[loc_q[k]]                   += f[j*params->columnL + loc_q[k]]*lagrInterL[j];
-        f_LR[params->columnL + loc_q[k]] += f[j*params->columnL + loc_q[k]]*lagrInterR[j];
-      }
-    }
-  }
-
-  return;
-}
-
-void computeFlux(essential* params, double *u_LR, double *f_LR)
-{
-
-  //int loc_q[nvar];
-  //double u_L[nvar], u_R[nvar], f_I[nvar];
-  int *loc_q = new int[params->nvar];
-  double *u_L = new double[params->nvar];
-  double *u_R = new double[params->nvar];
-  double *f_I = new double[params->nvar];
-
-  for ( int i = 0; i < params->nelem-1; i++ )
-  {
-    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i+j*params->nelem;
-    for ( int j = 0; j < params->nvar; j++ )
-    {
-      u_R[j] = u_LR[1*params->columnL + loc_q[j]];
-      u_L[j] = u_LR[loc_q[j]+1]; //left of the next element
-    }
-    //roe_flux(u_R, u_L, f_I); // normal direction to right
-    //lax_friedrich
-    f_I[0] = u_R[0]; //pure upwind
-    for ( int j = 0; j < params->nvar; j++ )
-    {
-      f_LR[1*params->columnL + loc_q[j]] = f_I[j] - f_LR[1*params->columnL + loc_q[j]];
-      f_LR[loc_q[j]+1] = f_I[j] - f_LR[loc_q[j]+1]; //left of the next element
-    }
-  }
-  //for one variable advection periodic;
-  u_R[0] = u_LR[params->columnL + params->nelem-1]; //very right
-  u_L[0] = u_LR[0]; //very left
-  f_I[0] = u_R[0];
-  f_LR[params->columnL + params->nelem-1] = f_I[0] - f_LR[params->columnL + params->nelem-1];
-  f_LR[0] = f_I[0] - f_LR[0];
-  return;
-}
-
-void update( essential *params, double *u, double *f, double *f_LR, 
-             double *lagrDerivs, double *hL, double *hR )
-{
-
-  double *dummy = new double[params->porder+1];
-
-  for ( int i = 0; i < params->columnL; i++ )
-  {
-    for ( int j = 0; j < params->porder+1; j++ ) dummy[j] = 0;
-    for ( int j = 0; j < params->porder+1; j++ )
-    {
-      for ( int k = 0; k < params->porder+1; k++ )
-      {
-        dummy[j] += lagrDerivs[j*(params->porder+1)+k]*f[k*params->columnL+i];
-      }
-      //dummy[j] += hL[j]*f_LR[0][i] + hR[j]*f_LR[1][i];
-      dummy[j] += hL[j]*f_LR[i] + hR[j]*f_LR[params->columnL+i];
-    }
-    //for ( int j = 0; j < params->porder+1; j++ ) f[j][i] = dummy[j];
-    //update
-    for ( int j = 0; j < params->porder+1; j++ )
-      //u[j*params->columnL+i] -= dummy[j]*params->dt/params->jacob;
-      u[j*params->columnL+i] = -dummy[j]/params->jacob;
-  }
-
-  return;
-}
-
 
 void set_lagrangeDerivs(int p, double *soln_coords, double **derivs)
 {
