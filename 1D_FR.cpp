@@ -2,7 +2,6 @@
 // Semih Akkurt
 // git - master/2D
 
-// start doint dynamic memory
 
 // set initial condition
 // evaluate derivatives of correction function at gauss legendre points and store
@@ -54,8 +53,8 @@ int main()
 
   L_x = 20;
   L_y = 20;
-  params.nelem_x = 10;
-  params.nelem_y = 10;
+  params.nelem_x = 2;
+  params.nelem_y = 2;
   params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
@@ -68,7 +67,7 @@ int main()
   params.nfe    = 4*(params.porder+1); //only for quad
   params.dt     = 0.00001;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 100;
+  params.maxIte = 1000;
   params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
@@ -112,6 +111,7 @@ int main()
   std::cout << "nvar: " << params.nvar << "\n";
   std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
+  std::cout << "columnL: " << params.columnL << "\n";
   std::cout << "dx: " << L/params.nelem << "\n";
   std::cout << "Lenght: " << L << "\n";
   std::cout << "jacob: " << params.jacob << "\n";
@@ -267,6 +267,8 @@ int main()
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
+
+
       for ( int j = 0; j < params.nfe*params.columnL; j++ )
       {
         fface << f_face[j] << " ";
@@ -385,17 +387,17 @@ void superFunc( essential* params, double *u, double *f, double *g,
           indx_elem = (j*(params->porder+1)+i)*params->columnL+loc_q[k];//+i_elem;
           indx_B = i*params->columnL+loc_q[k];//+i_elem;
           indx_T = (3*(params->porder+1)-1-i)*params->columnL+loc_q[k];//+i_elem;
-          u_face[indx_L] += lagrInterL[i]*u[indx_elem];
-          f_face[indx_L] += lagrInterL[i]*f[indx_elem];
+          u_face[indx_L] += lagrInterL[j]*u[indx_elem];
+          f_face[indx_L] += lagrInterL[j]*f[indx_elem];
           //g_face[indx_L] += lagrInterL[i]*g[indx_elem];
-          u_face[indx_R] += lagrInterR[i]*u[indx_elem];
-          f_face[indx_R] += lagrInterR[i]*f[indx_elem];
+          u_face[indx_R] += lagrInterR[j]*u[indx_elem];
+          f_face[indx_R] += lagrInterR[j]*f[indx_elem];
           //g_face[indx_R] += lagrInterR[i]*g[indx_elem];
-          u_face[indx_B] += lagrInterL[j]*u[indx_elem];
-          f_face[indx_B] += lagrInterL[j]*g[indx_elem];//from g
+          u_face[indx_B] += lagrInterL[i]*u[indx_elem];
+          f_face[indx_B] += lagrInterL[i]*g[indx_elem];//from g
           //g_face[indx_B] += lagrInterL[j]*g[indx_elem];
-          u_face[indx_T] += lagrInterR[j]*u[indx_elem];
-          f_face[indx_T] += lagrInterR[j]*g[indx_elem];//from g
+          u_face[indx_T] += lagrInterR[i]*u[indx_elem];
+          f_face[indx_T] += lagrInterR[i]*g[indx_elem];//from g
           //g_face[indx_T] += lagrInterR[j]*g[indx_elem];
         }
       }
@@ -448,6 +450,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
     {
       int i_elem = i_y*params->nelem_x+i_x;
       for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+      // left and right
       if ( i_x != params->nelem_x-1 ) next_elem = 1;
       else next_elem = 1-params->nelem; //if at the end
       pairL[0] = 4 ; pairL[1] = 5 ; pairL[2] = 6 ; pairL[3] = 7 ;
@@ -469,6 +472,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
           f_face[indx_R] = f_I[j]*params->j_x - f_face[indx_R];
         }
       }
+      // bottom and top
       if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
       else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
       pairL[0] = 11; pairL[1] = 10; pairL[2] = 9; pairL[3] = 8;
@@ -524,9 +528,9 @@ void update( essential *params, double *u, double *f, double *g, double *f_face,
                           *lagrDerivs[j*(params->porder+1)+k];
           dummy[ji_row] += g[(k*(params->porder+1)+i)*params->columnL+i_elem]
                           *lagrDerivs[i*(params->porder+1)+k];
-          dummy[ji_row] += f_face[indx_L]*hL[i]+f_face[indx_R]*hR[i];
-          dummy[ji_row] += f_face[indx_B]*hL[j]+f_face[indx_T]*hR[j];
         }
+        //dummy[ji_row] += f_face[indx_L]*hL[i]+f_face[indx_R]*hR[i];
+        //dummy[ji_row] += f_face[indx_B]*hL[j]+f_face[indx_T]*hR[j];
       }
     }
     for ( int j = 0; j < params->nse; j++ )
@@ -577,7 +581,7 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
                        u_hat*n_x+v_hat*n_y,
                        u_hat*n_x+v_hat*n_y+a_hat,
                        u_hat*n_x+v_hat*n_y };
-  for ( int i = 0; i < 3; i++ ) lambda[i] = std::abs(lambda[i]);
+  for ( int i = 0; i < 4; i++ ) lambda[i] = std::abs(lambda[i]);
 
   double r_eig[4][4] = { {1.0, 1.0, 1.0, 0.0},
                          {u_hat-a_hat*n_x, u_hat, u_hat+a_hat*n_x,-n_y},
