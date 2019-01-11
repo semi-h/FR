@@ -51,10 +51,10 @@ int main()
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  L_x = 20;
-  L_y = 20;
-  params.nelem_x = 100;
-  params.nelem_y = 100;
+  L_x = 100;
+  L_y = 100;
+  params.nelem_x = 50;
+  params.nelem_y = 50;
   params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
@@ -65,10 +65,10 @@ int main()
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.000001;
+  params.dt     = 0.02;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 100;
-  params.nRK = 1; //1 || 4
+  params.maxIte = 10000;
+  params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
 
@@ -112,9 +112,12 @@ int main()
   std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
   std::cout << "columnL: " << params.columnL << "\n";
-  std::cout << "dx: " << L/params.nelem << "\n";
+  std::cout << "dx: " << L_x/params.nelem_x << "\n";
+  std::cout << "dy: " << L_y/params.nelem_y << "\n";
   std::cout << "Lenght: " << L << "\n";
   std::cout << "jacob: " << params.jacob << "\n";
+  std::cout << "jacob x: " << params.j_x << "\n";
+  std::cout << "jacob y: " << params.j_y << "\n";
   std::cout << "dt: " << params.dt << "\n";
   std::cout << "end time: " << params.maxIte*params.dt << "\n";
   std::cout << "RK stage: " << params.nRK << std::endl;
@@ -192,6 +195,7 @@ int main()
   {
     if ( false )
     {
+      std::cout << "Euler vortex\n";
       double S = 13.5;    // Strength
       double M = 0.4;     // Mach number
       double R = 1.5;     // Radius
@@ -227,7 +231,8 @@ int main()
     }
     else // constant q_inf
     {
-      double rho_inf = 1, u_inf = 0.2, v_inf = 0.2, p_inf = 1;
+      double rho_inf = 1, u_inf = 1, v_inf = 1, p_inf = 1;
+      std::cout << "const speed, u=" << u_inf << ", v=" << v_inf << "\n";
       for ( int i = 0; i < params.nelem; i++ )
       {
         for ( int j = 0; j < params.nse; j++ )
@@ -243,8 +248,10 @@ int main()
   }
 
   std::cout << "main loop begins\n";
-  std::ofstream fface;
-  fface.open("f_face");
+  //std::ofstream fface;
+  //fface.open("f_face");
+  //std::ofstream uvals;
+  //uvals.open("u_vals");
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
@@ -267,14 +274,22 @@ int main()
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
-
-
+/*
+      fface << ite << "\n";
       for ( int j = 0; j < params.nfe*params.columnL; j++ )
       {
         fface << f_face[j] << " ";
         if ( (j+1)%params.columnL == 0 ) fface << "\n";
       }
       fface << "\n";
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        uvals << u[j] << " ";
+        if ( (j+1)%params.columnL == 0 ) uvals << "\n";
+      }
+      uvals << "\n";
+*/
     }
   }
 
@@ -378,6 +393,27 @@ void superFunc( essential* params, double *u, double *f, double *g,
     //rows
     for ( int j = 0; j < params->porder+1; j++ )
     {
+      // after k loop;
+      // At this point all rho rhoU rhoV E for a point are already in the cache I hope
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        //index of the first data in the row; +loc_q[k] gives the correct pos
+        indx_elem = (j*(params->porder+1)+i)*params->columnL;
+        f[indx_elem+loc_q[0]] = u[indx_elem+loc_q[1]];
+        g[indx_elem+loc_q[0]] = u[indx_elem+loc_q[2]];
+        double rho = u[indx_elem+loc_q[0]];
+        double vel_u = u[indx_elem+loc_q[1]]/rho;
+        double vel_v = u[indx_elem+loc_q[2]]/rho;
+        double E = u[indx_elem+loc_q[3]];
+        double p = (gammaVal-1)*(E-0.5*rho*(vel_u*vel_u+vel_v*vel_v));
+        f[indx_elem+loc_q[1]] = rho*vel_u*vel_u + p;
+        g[indx_elem+loc_q[1]] = rho*vel_u*vel_v;
+        f[indx_elem+loc_q[2]] = rho*vel_u*vel_v;//rho*vel_v*vel_u;
+        g[indx_elem+loc_q[2]] = rho*vel_v*vel_v + p;
+        f[indx_elem+loc_q[3]] = (E+p)*vel_u;
+        g[indx_elem+loc_q[3]] = (E+p)*vel_v;
+      }
+
       for ( int k = 0; k < params->nvar; k++ )
       {
         indx_L = (4*(params->porder+1)-1-j)*params->columnL+loc_q[k];//i_elem;
@@ -401,26 +437,7 @@ void superFunc( essential* params, double *u, double *f, double *g,
           //g_face[indx_T] += lagrInterR[j]*g[indx_elem];
         }
       }
-      // after k loop;
-      // At this point all rho rhoU rhoV E for a point are already in the cache I hope
-      for ( int i = 0; i < params->porder+1; i++ )
-      {
-        //index of the first data in the row; +loc_q[k] gives the correct pos
-        indx_elem = (j*(params->porder+1)+i)*params->columnL;
-        f[indx_elem+loc_q[0]] = u[indx_elem+loc_q[1]];
-        g[indx_elem+loc_q[0]] = u[indx_elem+loc_q[2]];
-        double rho = u[indx_elem+loc_q[0]];
-        double vel_u = u[indx_elem+loc_q[1]]/rho;
-        double vel_v = u[indx_elem+loc_q[2]]/rho;
-        double E = u[indx_elem+loc_q[3]];
-        double p = (gammaVal-1)*(E-0.5*rho*(vel_u*vel_u+vel_v*vel_v));
-        f[indx_elem+loc_q[1]] = rho*vel_u*vel_u + p;
-        g[indx_elem+loc_q[1]] = rho*vel_u*vel_v;
-        f[indx_elem+loc_q[2]] = rho*vel_u*vel_v;//rho*vel_v*vel_u;
-        g[indx_elem+loc_q[2]] = rho*vel_v*vel_v + p;
-        f[indx_elem+loc_q[3]] = (E+p)*vel_u;
-        g[indx_elem+loc_q[3]] = (E+p)*vel_v;
-      }
+
     }
   }
 
@@ -468,8 +485,8 @@ void computeFlux(essential* params, double *u_face, double *f_face)
         {
           indx_L = pairL[i]*params->columnL + loc_q[j];
           indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j]*params->j_x - f_face[indx_L];
-          f_face[indx_R] = f_I[j]*params->j_x - f_face[indx_R];
+          f_face[indx_L] = f_I[j] - f_face[indx_L];
+          f_face[indx_R] = f_I[j] - f_face[indx_R];
         }
       }
       // bottom and top
@@ -490,8 +507,8 @@ void computeFlux(essential* params, double *u_face, double *f_face)
         {
           indx_L = pairL[i]*params->columnL + loc_q[j];
           indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j]*params->j_y - f_face[indx_L];
-          f_face[indx_R] = f_I[j]*params->j_y - f_face[indx_R];
+          f_face[indx_L] = f_I[j] - f_face[indx_L];
+          f_face[indx_R] = f_I[j] - f_face[indx_R];
         }
       }
     }
