@@ -45,6 +45,11 @@ void computeFlux(essential* params, double *u_face, double *f_face);
 
 int main()
 {
+  double ql[4] = {1, 1.5, 0.5, 2.5};
+  double qr[4] = {1, 0.5, 1.5, 2.5};
+  double fluxx[4];
+  roe_flux(ql, qr, 1.0, 0.0, fluxx);
+std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] << "\n";
   double L = 10;
   essential params;
   double L_x, L_y;
@@ -65,9 +70,9 @@ int main()
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.02;
+  params.dt     = 0.001;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 10000;
+  params.maxIte = 207;
   params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
@@ -193,7 +198,7 @@ int main()
   }
   else if ( params.nvar == 4 )
   {
-    if ( false )
+    if ( true )
     {
       std::cout << "Euler vortex\n";
       double S = 13.5;    // Strength
@@ -574,44 +579,69 @@ void get_flux(double *q, double *flux)
   return;
 }
 
+
 void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
 {
 
-  double p_L, p_R, H_L, H_R;
-  p_L = (gammaVal-1)*(q_L[3]-0.5*(q_L[1]*q_L[1]+q_L[2]*q_L[2])/q_L[0]);
-  p_R = (gammaVal-1)*(q_R[3]-0.5*(q_R[1]*q_R[1]+q_R[2]*q_R[2])/q_R[0]);
-  H_L = (q_L[3]+p_L)/q_L[0];
-  H_R = (q_R[3]+p_R)/q_R[0];
-//std::cout << p_L << " " << p_R ;
-  double rho_hat, u_hat, v_hat, H_hat, a_hat;
+  double rho_L, u_L, v_L, E_L, p_L, c_L, H_L;
+  rho_L = q_L[0];
+  u_L = q_L[1]/q_L[0];
+  v_L = q_L[2]/q_L[0];
+  E_L = q_L[3];
+  p_L = (gammaVal-1)*(E_L-0.5*rho_L*(u_L*u_L+v_L*v_L));
+  c_L = sqrt(gammaVal*p_L/rho_L);
+  H_L = (p_L+E_L)/rho_L;
 
-  rho_hat = sqrt(q_L[0]*q_R[0]);
-  u_hat   = (sqrt(q_L[0])*q_L[1]/q_L[0] + sqrt(q_R[0])*q_R[1]/q_R[0])
-           /(sqrt(q_L[0]) + sqrt(q_R[0]));
-  v_hat   = (sqrt(q_L[0])*q_L[2]/q_L[0] + sqrt(q_R[0])*q_R[2]/q_R[0])
-           /(sqrt(q_L[0]) + sqrt(q_R[0]));
-  H_hat   = (sqrt(q_L[0])*H_L + sqrt(q_R[0])*H_R)
-           /(sqrt(q_L[0]) + sqrt(q_R[0]));
-  a_hat   = sqrt((gammaVal-1)*(H_hat-0.5*(u_hat*u_hat+v_hat*v_hat)));
+  double rho_R, u_R, v_R, E_R, p_R, c_R, H_R;
+  rho_R = q_R[0];
+  u_R = q_R[1]/q_R[0];
+  v_R = q_R[2]/q_R[0];
+  E_R = q_R[3];
+  p_R = (gammaVal-1)*(E_R-0.5*rho_R*(u_R*u_R+v_R*v_R));
+  c_R = sqrt(gammaVal*p_R/rho_R);
+  H_R = (p_R+E_R)/rho_R;
 
-  double lambda[4] = { u_hat*n_x+v_hat*n_y-a_hat,
+  double rsl, rsr, rho_hat, u_hat, v_hat, H_hat, c_hat;//, E_hat;
+  rsl = sqrt(rho_L);
+  rsr = sqrt(rho_R);
+  rho_hat = rsl*rsr;
+  u_hat = (rsl*u_L+rsr*u_R)/(rsl+rsr);
+  v_hat = (rsl*v_L+rsr*v_R)/(rsl+rsr);
+  H_hat = (rsl*H_L+rsr*H_R)/(rsl+rsr);
+  c_hat = sqrt((gammaVal-1)*(H_hat-0.5*(u_hat*u_hat+v_hat*v_hat)));
+  //p_hat = rho_hat*c_hat*c_hat/gammaVal;
+  //E_hat = rho_hat*H_hat-p_hat;
+
+  double lambda[4] = { u_hat*n_x+v_hat*n_y-c_hat,
                        u_hat*n_x+v_hat*n_y,
-                       u_hat*n_x+v_hat*n_y+a_hat,
+                       u_hat*n_x+v_hat*n_y+c_hat,
                        u_hat*n_x+v_hat*n_y };
   for ( int i = 0; i < 4; i++ ) lambda[i] = std::abs(lambda[i]);
 
-  double r_eig[4][4] = { {1.0, 1.0, 1.0, 0.0},
-                         {u_hat-a_hat*n_x, u_hat, u_hat+a_hat*n_x,-n_y},
-                         {v_hat-a_hat*n_y, v_hat, v_hat+a_hat*n_y, n_x},
-                         { H_hat-(u_hat*n_x+v_hat*n_y)*a_hat, 0.5*(pow(u_hat,2)+pow(v_hat,2)), 
-                           H_hat+(u_hat*n_x+v_hat*n_y)*a_hat, -u_hat*n_y+v_hat*n_x } };
+  double lam_L[4] = { u_L*n_x+v_L*n_y-c_L,
+                      u_L*n_x+v_L*n_y,
+                      u_L*n_x+v_L*n_y+c_L,
+                      u_L*n_x+v_L*n_y };
+  double lam_R[4] = { u_R*n_x+v_R*n_y-c_R,
+                      u_R*n_x+v_R*n_y,
+                      u_R*n_x+v_R*n_y+c_R,
+                      u_R*n_x+v_R*n_y };
+  double eps = 0.01;
+  for ( int i = 0; i < 4; i++ ) eps = std::max(std::abs(lam_R[i]-lam_L[i]),eps);
+  for ( int i = 0; i < 4; i++ ) if ( std::abs(lambda[i]) <= 2*eps ) lambda[i] = lambda[i]*lambda[i]/(4*eps)+eps;
 
-  double w0[4] = { ( p_R-p_L - rho_hat*a_hat*( (q_R[1]*n_x+q_R[2]*n_y)/q_R[0]
-                                             - (q_L[1]*n_x+q_L[2]*n_y)/q_L[0] ) )/(2.0*a_hat*a_hat),
-                  -(p_R-p_L)/(a_hat*a_hat) + q_R[0]-q_L[0],
-                   ( p_R-p_L + rho_hat*a_hat*( (q_R[1]*n_x+q_R[2]*n_y)/q_R[0]
-                                             - (q_L[1]*n_x+q_L[2]*n_y)/q_L[0] ) )/(2.0*a_hat*a_hat),
-                   rho_hat*((-q_R[1]*n_y+q_R[2]*n_x)/q_R[0]+(q_L[1]*n_y-q_L[2]*n_x)/q_L[0]) };
+  double r_eig[4][4] = { {1.0, 1.0, 1.0, 0.0},
+                         {u_hat-c_hat*n_x, u_hat, u_hat+c_hat*n_x,-n_y},
+                         {v_hat-c_hat*n_y, v_hat, v_hat+c_hat*n_y, n_x},
+                         { H_hat-(u_hat*n_x+v_hat*n_y)*c_hat, 0.5*(pow(u_hat,2)+pow(v_hat,2)), 
+                           H_hat+(u_hat*n_x+v_hat*n_y)*c_hat, -u_hat*n_y+v_hat*n_x } };
+
+  double w0[4] = { ( p_R-p_L - rho_hat*c_hat*( (u_R*n_x+v_R*n_y) 
+                                             - (u_L*n_x+v_L*n_y) ) )/(2.0*c_hat*c_hat),
+                  -(p_R-p_L)/(c_hat*c_hat) + rho_R-rho_L,
+                   ( p_R-p_L + rho_hat*c_hat*( (u_R*n_x+v_R*n_y)
+                                             - (u_L*n_x+v_L*n_y) ) )/(2.0*c_hat*c_hat),
+                   rho_hat*((-u_R*n_y+v_R*n_x)+(u_L*n_y-v_L*n_x)) };
 
   double diss[4];
   for ( int i = 0; i < 4; i++ )
@@ -640,6 +670,7 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
 
   return;
 }
+
 
 
 void set_solnPoints(int p, double **soln_coords, double **weights)
