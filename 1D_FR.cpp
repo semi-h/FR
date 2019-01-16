@@ -31,7 +31,6 @@ void set_solnPoints(int p, double **soln_coords, double **weights);
 void set_lagrangeDerivs(int p, double *soln_coords, double **derivs);
 void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, double **lagrInterR);
 void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
-void get_flux(double *nvar, double *flux);
 void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI);
 
 void superFunc( essential* params, double *u, double *f, double *g, 
@@ -70,9 +69,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 2; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.01;
+  params.dt     = 0.05;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 1000;
+  params.maxIte = 2000;
   params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
@@ -220,7 +219,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
               y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
               f = ((1 - x*x - y*y)/(2*R*R));
               rho = pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), 1/(gammaVal - 1));
-              u_vel = 1+S*y*exp(f)/(2*pi*R);
+              u_vel = 1 + S*y*exp(f)/(2*pi*R);
               v_vel = 1 - S*x*exp(f)/(2*pi*R);
               p = 1/(gammaVal*M*M)*pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), gammaVal/(gammaVal - 1));
               int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
@@ -252,18 +251,32 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     }
     else
     {
-      double x, sigma=0.2, pi=3.141592653589793, mu=0;
+      double x, y, sigma=0.4, pi=3.141592653589793, mu=0;
       std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
-      for ( int i = 0; i < params.nelem; i++ )
+      double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+      double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
+      for ( int i = 0; i < params.nelem_x; i++ )
       {
-        //x = i*L/nelem-5;
-        for ( int j = 0; j < params.porder+1; j++ )
+        for ( int j = 0; j < params.nelem_y; j++ )
         {
-        x = i*L/params.nelem-50 + soln_coords[j]*params.jacob;
-        u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
-        old_u[j*params.columnL + i] = 0;
+          for ( int ii = 0; ii < params.porder+1; ii++ )
+          {
+            for ( int jj = 0; jj < params.porder+1; jj++ )
+            {
+              x = x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+              y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+
+              int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
+              u[row_loc+(j*params.nelem_x+i)] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((y-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x+y)*0.5-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x-y)*0.5-mu)/sigma,2));
+            }
+          }
         }
       }
+
+
     }
   }
 
@@ -417,6 +430,11 @@ void superFunc( essential* params, double *u, double *f, double *g,
         g[indx_elem+loc_q[2]] = rho*vel_v*vel_v + p;
         f[indx_elem+loc_q[3]] = (E+p)*vel_u;
         g[indx_elem+loc_q[3]] = (E+p)*vel_v;
+        /*for ( int k = 0; k < params->nvar; k++ )
+        {
+          f[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
+          g[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
+        }*/
       }
     //}
     //for ( int j = 0; j < params->porder+1; j++ )
@@ -487,6 +505,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
         {
           u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]];
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+          //f_I[j] = u_L[j];
         }
         roe_flux(u_L, u_R, 1.0, 0.0, f_I);
         //overwrite f_face
@@ -511,6 +530,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
         {
           u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]];
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+          //f_I[j] = u_L[j];
         }
         roe_flux(u_L, u_R, 0.0, 1.0, f_I);
         //overwrite f_face
@@ -565,23 +585,6 @@ void update( essential *params, double *u, double *f, double *g, double *f_face,
       u[j*params->columnL+i_elem] =-dummy[j]/params->jacob;
   }
 
-  return;
-}
-
-
-
-
-
-
-void get_flux(double *q, double *flux)
-{
-  double u, p;
-
-  flux[0] = q[1];
-  u = q[1]/q[0];
-  p = (gammaVal-1)*(q[2]-0.5*q[1]*u);
-  flux[1] = q[1]*u+p;
-  flux[2] = (q[2]+p)*u;
   return;
 }
 
@@ -660,8 +663,6 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
   }
 
   double flux_L[4], flux_R[4];
-  //get_flux(q_L, flux_L);
-  //get_flux(q_R, flux_R);
   flux_L[0] = q_L[1]*n_x + q_L[2]*n_y;
   flux_L[1] = (q_L[1]*n_x + q_L[2]*n_y)*q_L[1]/q_L[0] + p_L*n_x;
   flux_L[2] = (q_L[1]*n_x + q_L[2]*n_y)*q_L[2]/q_L[0] + p_L*n_y;
@@ -777,11 +778,11 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
   }
   else if ( p == 1 )
   {
-    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = -0.5;
+    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 1.5*soln_coords[i] - 0.5;
   }
   else if ( p == 2 )
   {
-    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 1.5*soln_coords[i] - 0.5;
+    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 0.25*(-15.0*pow(soln_coords[i],2)+6.0*soln_coords[i]+3.0);
   }
   else if ( p == 3 )
   {
