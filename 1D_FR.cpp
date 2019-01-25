@@ -1,8 +1,8 @@
 // 1D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git - master/runge-kutta
+// git - master/1D_implicit
 
-// start doint dynamic memory
+// start doing dynamic memory
 
 // set initial condition
 // evaluate derivatives of correction function at gauss legendre points and store
@@ -14,6 +14,7 @@
 // call flux function for each cell boundary using reconstructed solution
 // update solution points
 
+//g++ -O2 -o run_FR 1D_FR.cpp -I/home/semih/lapack-3.8.0/LAPACKE/include -L/home/semih/lapack-3.8.0 -llapacke -llapack -lrefblas -lgfortran
 
 #include <iostream>
 #include <fstream>
@@ -23,7 +24,7 @@
 
 struct essential {
   double dt, jacob;
-  int nvar, porder, nelem, columnL, maxIte, nRK;
+  int nvar, porder, nelem, columnL, maxIte, nRK, nU;
 } ;
 
 const double gammaVal=1.4;
@@ -42,21 +43,49 @@ void update( essential *params, double *u, double *f, double *f_LR,
 void computeFlux(essential* params, double *u_LR, double *f_LR);
 
 
+#include <lapacke.h>
+int dene ()
+{
+   double a[5][3] = {1,1,1,2,3,4,3,5,2,4,2,5,5,4,3};
+   double b[5][2] = {-10,-3,12,14,14,12,16,16,18,16};
+   lapack_int info,m,n,lda,ldb,nrhs;
+   int i,j;
+
+   m = 5;
+   n = 3;
+   nrhs = 2;
+   lda = 3;
+   ldb = 2;
+
+   info = LAPACKE_dgels(LAPACK_ROW_MAJOR,'N',m,n,nrhs,*a,lda,*b,ldb);
+
+   for(i=0;i<n;i++)
+   {
+      for(j=0;j<nrhs;j++)
+      {
+         printf("%lf ",b[i][j]);
+      }
+      printf("\n");
+   }
+   return(info);
+}
 
 int main()
 {
+  dene();
   double L, jacob, dt;
   L = 10;
   essential params;
 
   params.nvar   = 1;
   params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.01;
+  params.dt     = 0.001;
   params.nelem  = 100;
-  params.maxIte = 1000;
-  params.nRK = 4; //1 or 3
+  params.maxIte = 10000;
+  params.nRK = 1; //1 or 3
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
+  params.nU = (params.porder+1)*params.nvar*params.nelem;
 
 
   std::cout << "polynomial order is set " << params.porder << std::endl;
@@ -85,6 +114,49 @@ int main()
   // 2N storage RK
   double *old_u;
   old_u = new double [(params.porder+1)*params.nelem*params.nvar];
+
+  // implicit matrix
+  double *bigA;
+  bigA = new double [params.nU*params.nU];
+  for ( int i = 0; i < params.nU*params.nU; i++ ) bigA[i] = 0;
+  double *RHS; // right hand side
+  RHS = new double [params.nU];
+  for ( int i = 0; i < params.nU; i++ ) RHS[i] = 0;
+
+  double *A;
+  A = new double [(params.porder+1)*(params.porder+1)];
+  int N = params.porder+1;
+  int *IPIV = new int[N+1];
+  int LWORK = N*N;
+  double *WORK = new double[LWORK];
+  int INFO;
+
+  for ( int i = 0; i < params.porder+1; i++ )
+  {
+    for ( int j = 0; j < params.porder+1; j++ )
+    {
+      A[i*(params.porder+1)+j] = lagrDerivs[i*(params.porder+1)+j];
+      if ( i == j ) A[i*(params.porder+1)+j] = A[i*(params.porder+1)+j] + 1/params.dt;
+    }
+  }
+
+  //dgetrf_(&N,&N,A,&N,IPIV,&INFO);
+  //dgetri_(&N,A,&N,IPIV,WORK,&LWORK,&INFO);
+
+  INFO = LAPACKE_dgetrf(LAPACK_ROW_MAJOR,N,N,A,N,IPIV);
+  std::cout << INFO << "\n";
+  INFO = LAPACKE_dgetri(LAPACK_ROW_MAJOR,N,A,N,IPIV);//,WORK,&LWORK);
+  std::cout << INFO << "\n";
+  delete IPIV;
+  delete WORK;
+  for ( int i = 0; i < params.porder+1; i++ )
+  {
+    for ( int j = 0; j < params.porder+1; j++ )
+    {
+      std::cout << A[i*(params.porder+1)+j] << " ";
+    }
+    std::cout << "\n";
+  }
 
   std::cout << "max ite: " << params.maxIte << "\n";
   std::cout << "nelem: " << params.nelem << "\n";
@@ -183,24 +255,34 @@ int main()
       // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
       computeFlux(&params, u_LR, f_LR);
 
-
-      // NO BC
-      //q[0] = rho_0; q[1] = rho_0*u_0; q[2] = p_0/(gammaVal-1) + 0.5*rho_0*pow(u_0,2);
-      //get_flux(q,flux);
-      //for ( int i = 0; i < nvar; i++ ) f_LR[0][i*nelem] = 0;//flux[i];
-      //q[0] = rho_1; q[1] = rho_1*u_1; q[2] = p_1/(gammaVal-1) + 0.5*rho_1*pow(u_1,2);
-      //get_flux(q,flux);
-      //for ( int i = 0; i < nvar; i++ ) f_LR[1][(i+1)*nelem-1] = 0;//flux[i];
-      //f_LR[0][0] = 0; f_LR[0][nelem] = 0; f_LR[0][2*nelem] = 0;
-      //f_LR[1][nelem-1] = 0; f_LR[1][2*nelem-1] = 0; f_LR[1][3*nelem-1] = 0;
-
       //update solution
       update(&params, u, f, f_LR, lagrDerivs, hL, hR);
-
+      /*
       for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
+      */
+      
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        //u[j] = old_u[j] + alpha[i]*params.dt*u[j];
+        // A*u;
+        double *dummy = new double[params.porder+1];
+        for ( int ii = 0; ii < params.porder+1; ii++ ) dummy[ii] = 0;
+        for ( int ii = 0; ii < params.porder+1; ii++ )
+        {
+          for ( int jj = 0; jj < params.porder+1; jj++ )
+          {
+            dummy[ii] += A[ii*(params.porder+1)+jj]*u[j*(params.porder+1)+jj];
+          }
+        }
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+          u[j*(params.porder+1)+k] = old_u[j*(params.porder+1)+k] + dummy[k];
+        }
+      }
+      
     }
   }
 
