@@ -51,9 +51,9 @@ int main()
 
   params.nvar   = 1;
   params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.00001;
-  params.nelem  = 1000;
-  params.maxIte = 1000000;
+  params.dt     = 0.01;
+  params.nelem  = 100;
+  params.maxIte = 1000;
   params.nRK = 4; //1 or 3
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
@@ -209,7 +209,7 @@ int main()
   solution.open("solution");
   for ( int i = 0; i < params.nelem; i++ )
   { //print the first var at the 0th node in each element, for second var add +nelem
-    solution << u[0*params.columnL + i] << "\n";
+    //solution << u[0*params.columnL + i] << "\n";
     //for ( int j = 0; j < params.porder+1; j++ )
       //solution << u[j*params.columnL + i] << "\n";
   }
@@ -224,6 +224,7 @@ int main()
     for ( int j = 0; j < params.porder+1; j++ )
     {
     x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
+    solution << x << " " << u[j*params.columnL+i] << "\n";
     //u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
     error += pow(u[j*params.columnL + i]-1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2)) , 2);
     }
@@ -515,16 +516,18 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
   }
   else if ( p == 1 )
   {
-    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = -0.5;
+    for ( int i = 0; i < p+1; i++ ) 
+      (*hL)[i] = 1.5*soln_coords[i] - 0.5;
   }
   else if ( p == 2 )
   {
-    for ( int i = 0; i < p+1; i++ ) (*hL)[i] = 1.5*soln_coords[i] - 0.5;
+    for ( int i = 0; i < p+1; i++ ) 
+      (*hL)[i] = 0.25*(-15.0*pow(soln_coords[i],2)+6.0*soln_coords[i]+3.0);
   }
   else if ( p == 3 )
   {
     for ( int i = 0; i < p+1; i++ ) 
-      (*hL)[i] = 0.25*(-15.0*pow(soln_coords[i],2)+6.0*soln_coords[i]+3.0);
+      (*hL)[i] = 0.125*(70*pow(soln_coords[i],3)-30*pow(soln_coords[i],2)-30*soln_coords[i]+6);
   }
 
   // uncomment below to set all 0.5 and -..
