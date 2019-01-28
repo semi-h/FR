@@ -79,10 +79,10 @@ int main()
 
   params.nvar   = 1;
   params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.001;
+  params.dt     = 0.015;
   params.nelem  = 100;
   params.maxIte = 10000;
-  params.nRK = 1; //1 or 3
+  params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
   params.nU = (params.porder+1)*params.nvar*params.nelem;
@@ -136,7 +136,7 @@ int main()
     for ( int j = 0; j < params.porder+1; j++ )
     {
       A[i*(params.porder+1)+j] = lagrDerivs[i*(params.porder+1)+j];
-      if ( i == j ) A[i*(params.porder+1)+j] = A[i*(params.porder+1)+j] + 1/params.dt;
+      if ( i == j ) A[i*(params.porder+1)+j] += 1/params.dt;
     }
   }
 
@@ -156,6 +156,57 @@ int main()
       std::cout << A[i*(params.porder+1)+j] << " ";
     }
     std::cout << "\n";
+  }
+
+  int loc;
+  for ( int i = 0; i < params.columnL; i++ )
+  {
+    for ( int j = 0; j < params.porder+1; j++ )
+    {
+      for ( int k = 0; k < params.porder+1; k++ )
+      {
+        loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]
+                   - lagrInterL[k]*hL[j];// - 0.5*lagrInterR[k]*hR[j];
+        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j];
+        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j];
+        if ( j == k ) bigA[loc] += 1/params.dt;
+      }
+    }
+  }
+  N = params.nU;
+  LWORK = N*N;
+  IPIV = new int[N+1];
+  WORK = new double[LWORK];
+  
+  std::ofstream Amatrix;
+  Amatrix.open("Amatrix");
+  for ( int i = 0; i < params.nU; i++ )
+  {
+    for ( int j = 0; j < params.nU; j++ )
+    {
+      Amatrix << bigA[i*params.nU+j] << " ";
+    }
+    Amatrix << "\n";
+  }
+
+  std::cout << "bigA\n";
+  INFO = LAPACKE_dgetrf(LAPACK_ROW_MAJOR,N,N,bigA,N,IPIV);
+  std::cout << INFO << "\n";
+  INFO = LAPACKE_dgetri(LAPACK_ROW_MAJOR,N,bigA,N,IPIV);//,WORK,&LWORK);
+  std::cout << INFO << "\n";
+  delete IPIV;
+  delete WORK;
+
+  Amatrix << "\n";
+  Amatrix << "\n";
+  for ( int i = 0; i < params.nU; i++ )
+  {
+    for ( int j = 0; j < params.nU; j++ )
+    {
+      Amatrix << bigA[i*params.nU+j] << " ";
+    }
+    Amatrix << "\n";
   }
 
   std::cout << "max ite: " << params.maxIte << "\n";
@@ -240,6 +291,7 @@ int main()
   }
   }
 
+  double *dummyU = new double[params.porder+1];
   std::cout << "main loop begins\n";
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
@@ -263,7 +315,7 @@ int main()
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
       */
-      
+      /*
       for ( int j = 0; j < params.columnL; j++ )
       {
         //u[j] = old_u[j] + alpha[i]*params.dt*u[j];
@@ -274,15 +326,59 @@ int main()
         {
           for ( int jj = 0; jj < params.porder+1; jj++ )
           {
-            dummy[ii] += A[ii*(params.porder+1)+jj]*u[j*(params.porder+1)+jj];
+            dummy[ii] += A[ii*(params.porder+1)+jj]*u[jj*params.columnL+j];
           }
         }
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          u[j*(params.porder+1)+k] = old_u[j*(params.porder+1)+k] + dummy[k];
+          u[k*params.columnL+j] = old_u[k*params.columnL+j] + alpha[i]*dummy[k];
+        }
+      }
+      */
+      
+      int loc;
+      for ( int ii = 0; ii < params.columnL; ii++ )
+      {
+        for ( int j = 0; j < params.porder+1; j++ ) dummyU[j] = 0;
+        for ( int j = 0; j < params.porder+1; j++ )
+        {
+          for ( int k = 0; k < params.porder+1; k++ )
+          {
+            loc = (ii*(params.porder+1)+j)*params.nU+ii*(params.porder+1)+k;
+            dummyU[j] += bigA[loc]*u[k*params.columnL + ii];
+            if ( ii == 0 ) dummyU[j] += bigA[loc+(params.columnL-1)*(params.porder+1)]*u[k*params.columnL + ii + params.columnL-1];
+            else dummyU[j] += bigA[loc-(params.porder+1)]*u[k*params.columnL + ii - 1];
+          }
+        }
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+          //u[ii*(params.porder+1)+k] = old_u[ii*(params.porder+1)+k] + alpha[i]*dummyU[k];
+          u[k*params.columnL+ii] = old_u[k*params.columnL+ii] + alpha[i]*dummyU[k];
         }
       }
       
+      /*
+      //dgetrs; requires dgetrf with bigA first
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+        RHS[j*(params.porder+1)+k] = u[k*params.columnL+j];
+        }
+      }
+      INFO = LAPACKE_dgetrs(LAPACK_ROW_MAJOR,'N',N,1,bigA,N,IPIV,RHS,1);
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+          u[k*params.columnL+j] = RHS[j*(params.porder+1)+k];
+        }
+      }
+      for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
+      {
+        u[j] = old_u[j] + alpha[i]*u[j];
+      }
+      */
     }
   }
 
