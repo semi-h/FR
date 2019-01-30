@@ -16,6 +16,8 @@
 
 //g++ -O2 -o run_FR 1D_FR.cpp -I/home/semih/lapack-3.8.0/LAPACKE/include -L/home/semih/lapack-3.8.0 -llapacke -llapack -lrefblas -lgfortran
 
+//g++ -O2 -o run_FR 1D_FR.cpp -I/home/semih/lapack-3.8.0/LAPACKE/include -I/home/semih/lapack-3.8.0/CBLAS/include -L/home/semih/lapack-3.8.0 -llapacke -llapack -lcblas -lrefblas -lgfortran
+
 #include <iostream>
 #include <fstream>
 #include <math.h>
@@ -44,6 +46,8 @@ void computeFlux(essential* params, double *u_LR, double *f_LR);
 
 
 #include <lapacke.h>
+#include <lapacke_utils.h>
+#include <cblas.h>
 int dene ()
 {
    double a[5][3] = {1,1,1,2,3,4,3,5,2,4,2,5,5,4,3};
@@ -74,14 +78,14 @@ int main()
 {
   dene();
   double L, jacob, dt;
-  L = 10;
+  L = 200;
   essential params;
 
   params.nvar   = 1;
   params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.015;
+  params.dt     = 0.075;
   params.nelem  = 100;
-  params.maxIte = 10000;
+  params.maxIte = 1000;
   params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
@@ -119,6 +123,12 @@ int main()
   double *bigA;
   bigA = new double [params.nU*params.nU];
   for ( int i = 0; i < params.nU*params.nU; i++ ) bigA[i] = 0;
+  double *invA;
+  invA = new double [params.nU*params.nU];
+  for ( int i = 0; i < params.nU*params.nU; i++ ) invA[i] = 0;
+  double *IA;
+  IA = new double [params.nU*params.nU];
+  for ( int i = 0; i < params.nU*params.nU; i++ ) IA[i] = 0;
   double *RHS; // right hand side
   RHS = new double [params.nU];
   for ( int i = 0; i < params.nU; i++ ) RHS[i] = 0;
@@ -158,6 +168,7 @@ int main()
     std::cout << "\n";
   }
 
+  std::cout << "construct implicit matrix\n";
   int loc;
   for ( int i = 0; i < params.columnL; i++ )
   {
@@ -166,10 +177,10 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]
-                   - lagrInterL[k]*hL[j];// - 0.5*lagrInterR[k]*hR[j];
-        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j];
-        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j];
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
+                   - lagrInterL[k]*hL[j]/params.jacob;// - 0.5*lagrInterR[k]*hR[j];
+        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
+        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         if ( j == k ) bigA[loc] += 1/params.dt;
       }
     }
@@ -185,6 +196,7 @@ int main()
   {
     for ( int j = 0; j < params.nU; j++ )
     {
+      invA[i*params.nU+j] = bigA[i*params.nU+j];
       Amatrix << bigA[i*params.nU+j] << " ";
     }
     Amatrix << "\n";
@@ -205,6 +217,26 @@ int main()
     for ( int j = 0; j < params.nU; j++ )
     {
       Amatrix << bigA[i*params.nU+j] << " ";
+    }
+    Amatrix << "\n";
+  }
+
+  //double one, zero;
+  //one = 1.0;
+  //zero = 0.0;
+  lapack_complex_float one,zero;
+  //one = lapack_make_complex_float(1.0,0.0);
+  //zero = lapack_make_complex_float(0.0,0.0);
+
+  //cblas_cgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, N, N, N, &one, bigA, N, invA, N, &zero, IA, N);
+
+  Amatrix << "\n";
+  Amatrix << "\n";
+  for ( int i = 0; i < params.nU; i++ )
+  {
+    for ( int j = 0; j < params.nU; j++ )
+    {
+      Amatrix << IA[i*params.nU+j] << " ";
     }
     Amatrix << "\n";
   }
@@ -242,6 +274,9 @@ int main()
   double rho_0 = 1, u_0 = 0, p_0 = 1;
   double rho_1 = 0.125, u_1 = 0, p_1 = 0.1;
 
+  double error = 0;
+  double x, sigma=20, pi=3.141592653589793, mu=0;
+
   if ( params.nvar == 3 )
   {
   double q[3], flux[3];
@@ -277,14 +312,14 @@ int main()
   {
   //gaussian bump
   std::cout << "Advection solver\n";
-  double x, sigma=0.2, pi=3.141592653589793, mu=0;
+  //double x, sigma=20, pi=3.141592653589793, mu=0;
   std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
   for ( int i = 0; i < params.nelem; i++ )
   {
     //x = i*L/nelem-5;
     for ( int j = 0; j < params.porder+1; j++ )
     {
-    x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
+    x = i*L/params.nelem-L/2+L/params.nelem/2 + soln_coords[j]*params.jacob;
     u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
     old_u[j*params.columnL + i] = 0;
     }
@@ -393,19 +428,32 @@ int main()
   }
 
   //error
-  double error = 0;
-  double x, sigma=0.2, pi=3.141592653589793, mu=0;
+  error = 0;
+  double value;
   std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
   for ( int i = 0; i < params.nelem; i++ )
   {
     //x = i*L/params.nelem-5;
+    value = 0;
+    for ( int k = 0; k < params.porder+1; k++ )
+    {
+      value += lagrInterL[k]*u[k*params.columnL + i];
+    }
+    solution << i*L/params.nelem-L/2 << " " << value << "\n";
     for ( int j = 0; j < params.porder+1; j++ )
     {
-    x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
+    //x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
+    x = i*L/params.nelem-L/2+L/params.nelem/2 + soln_coords[j]*params.jacob;
     solution << x << " " << u[j*params.columnL+i] << "\n";
     //u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
     error += pow(u[j*params.columnL + i]-1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2)) , 2);
     }
+    value = 0;
+    for ( int k = 0; k < params.porder+1; k++ )
+    {
+      value += lagrInterR[k]*u[k*params.columnL + i];
+    }
+    solution << (i+1)*L/params.nelem-L/2 << " " << value << "\n";
   }
 
   std::cout << "error " << log10(sqrt(error)/sqrt(params.nelem*(params.porder+1))) << "\n";
