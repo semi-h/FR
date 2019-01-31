@@ -83,10 +83,10 @@ int main()
 
   params.nvar   = 1;
   params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.075;
+  params.dt     = 2;
   params.nelem  = 100;
-  params.maxIte = 1000;
-  params.nRK = 4; //1 || 4
+  params.maxIte = 100;
+  params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
   params.nU = (params.porder+1)*params.nvar*params.nelem;
@@ -248,6 +248,7 @@ int main()
   std::cout << "jacob: " << params.jacob << "\n";
   std::cout << "dt: " << params.dt << "\n";
   std::cout << "end time: " << params.maxIte*params.dt << "\n";
+  std::cout << "# of cycle: " << params.maxIte*params.dt/L << "\n";
   std::cout << "RK stage: " << params.nRK << std::endl;
 
   double *alpha;
@@ -275,7 +276,7 @@ int main()
   double rho_1 = 0.125, u_1 = 0, p_1 = 0.1;
 
   double error = 0;
-  double x, sigma=20, pi=3.141592653589793, mu=0;
+  double x, sigma=2, pi=3.141592653589793, mu=0;
 
   if ( params.nvar == 3 )
   {
@@ -326,6 +327,7 @@ int main()
   }
   }
 
+  double eps = 0.000001;
   double *dummyU = new double[params.porder+1];
   std::cout << "main loop begins\n";
   // MAIN LOOP
@@ -370,28 +372,57 @@ int main()
         }
       }
       */
-      
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+          RHS[j*(params.porder+1)+k] = u[k*params.columnL+j];
+        }
+      }
       int loc;
       for ( int ii = 0; ii < params.columnL; ii++ )
       {
         for ( int j = 0; j < params.porder+1; j++ ) dummyU[j] = 0;
         for ( int j = 0; j < params.porder+1; j++ )
         {
-          for ( int k = 0; k < params.porder+1; k++ )
+          for ( int k = 0; k < params.nU; k++ )
           {
-            loc = (ii*(params.porder+1)+j)*params.nU+ii*(params.porder+1)+k;
-            dummyU[j] += bigA[loc]*u[k*params.columnL + ii];
-            if ( ii == 0 ) dummyU[j] += bigA[loc+(params.columnL-1)*(params.porder+1)]*u[k*params.columnL + ii + params.columnL-1];
-            else dummyU[j] += bigA[loc-(params.porder+1)]*u[k*params.columnL + ii - 1];
+            //loc = (ii*(params.porder+1)+j)*params.nU+ii*(params.porder+1)+k;
+            loc = (ii*(params.porder+1)+j)*params.nU+k;
+            dummyU[j] += bigA[loc]*RHS[k];
           }
         }
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          //u[ii*(params.porder+1)+k] = old_u[ii*(params.porder+1)+k] + alpha[i]*dummyU[k];
+          //commented out for numerical jacob evaluation
           u[k*params.columnL+ii] = old_u[k*params.columnL+ii] + alpha[i]*dummyU[k];
         }
       }
       
+
+/*
+      old_u[2*params.columnL] = old_u[2*params.columnL] + eps;
+      superFunc(&params, old_u, f, u_LR, f_LR, lagrInterL, lagrInterR);
+
+      //call flux function for each colocated uL uR pair of 2 neighbour elements
+      // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
+      computeFlux(&params, u_LR, f_LR);
+
+      //update solution
+      update(&params, old_u, f, f_LR, lagrDerivs, hL, hR);
+      // at this point, u is original rhs, old_u is the perterbed rhs
+      std::cout << "JACOBIAN\n";
+      std::cout << (old_u[0]-u[0])/eps << " "
+                << (old_u[params.columnL]-u[params.columnL])/eps << " "
+                << (old_u[2*params.columnL]-u[2*params.columnL])/eps << "\n";
+      std::cout << (old_u[1]-u[1])/eps << " "
+                << (old_u[1+params.columnL]-u[1+params.columnL])/eps << " "
+                << (old_u[1+2*params.columnL]-u[1+2*params.columnL])/eps << "\n";
+      std::cout << (old_u[2]-u[2])/eps << " "
+                << (old_u[2+params.columnL]-u[2+params.columnL])/eps << " "
+                << (old_u[2+2*params.columnL]-u[2+2*params.columnL])/eps << "\n";
+*/
+
       /*
       //dgetrs; requires dgetrf with bigA first
       for ( int j = 0; j < params.columnL; j++ )
