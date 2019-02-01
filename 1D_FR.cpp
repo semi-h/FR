@@ -104,6 +104,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   f_face = new double [params.nfe*params.columnL];
   //g_face = new double [params.nfe*params.columnL];
 
+  // element wise implicit matrix
+  double *invA;
+  invA = new double [params.nvar*params.nse];
+
   // 2N storage RK
   double *old_u;
   old_u = new double [params.nse*params.columnL];
@@ -303,10 +307,20 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       //update solution
       update(&params, u, f, g, f_face, lagrDerivs, hL, hR);
 
+      // change here for the element wise implicit
+
+      // create the matrix using flux function
+      
+      // invert the matrix
+      
+      // multiply with the rhs to obtain the delta u, and update the solution
+
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
+
+
 /*
       fface << ite << "\n";
       for ( int j = 0; j < params.nfe*params.columnL; j++ )
