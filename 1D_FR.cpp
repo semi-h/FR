@@ -82,10 +82,10 @@ int main()
   essential params;
 
   params.nvar   = 1;
-  params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 2;
+  params.porder = 2; // 0 || 1 || 2 || 3
+  params.dt     = 0.25;
   params.nelem  = 100;
-  params.maxIte = 100;
+  params.maxIte = 8000;
   params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
@@ -177,10 +177,12 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
-                   - lagrInterL[k]*hL[j]/params.jacob;// - 0.5*lagrInterR[k]*hR[j];
-        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
-        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob;
+                   //- lagrInterL[k]*hL[j]/params.jacob
+                   //- lagrInterR[k]*hR[j]/params.jacob;
+                   //- 0.5*lagrInterR[k]*hR[j];
+        //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
+        //else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         if ( j == k ) bigA[loc] += 1/params.dt;
       }
     }
@@ -276,7 +278,7 @@ int main()
   double rho_1 = 0.125, u_1 = 0, p_1 = 0.1;
 
   double error = 0;
-  double x, sigma=2, pi=3.141592653589793, mu=0;
+  double x, sigma=10, pi=3.141592653589793, mu=0;
 
   if ( params.nvar == 3 )
   {
