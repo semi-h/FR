@@ -2,6 +2,7 @@
 // Semih Akkurt
 // git - master/2D
 
+//g++ -O2 -o run_FR 1D_FR.cpp -I/home/semih/lapack-3.8.0/LAPACKE/include -I/home/semih/lapack-3.8.0/CBLAS/include -L/home/semih/lapack-3.8.0 -llapacke -llapack -lcblas -lrefblas -lgfortran
 
 // set initial condition
 // evaluate derivatives of correction function at gauss legendre points and store
@@ -19,6 +20,9 @@
 #include <math.h>
 #include <cmath>
 
+#include <lapacke.h>
+#include <lapacke_utils.h>
+#include <cblas.h>
 
 struct essential {
   double dt, jacob, j_x, j_y, ndim;
@@ -105,8 +109,14 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   //g_face = new double [params.nfe*params.columnL];
 
   // element wise implicit matrix
-  double *invA;
-  invA = new double [params.nvar*params.nse];
+  double *magicA;
+  magicA = new double [params.nvar*params.nse*params.nvar*params.nse];
+  double *Fblock;
+  Fblock = new double [params.nvar*(params.porder+1)*params.nvar];
+  double *Gblock;
+  Gblock = new double [params.nvar*(params.porder+1)*params.nvar];
+  double *rhs;
+  rhs = new double [params.nvar*params.nse];
 
   // 2N storage RK
   double *old_u;
@@ -284,6 +294,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     }
   }
 
+
+  int *loc_u = new int[params.nvar];
+  double *dummyU = new double[params.nvar*params.nse];
+
   std::cout << "main loop begins\n";
   //std::ofstream fface;
   //fface.open("f_face");
@@ -292,6 +306,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
+    std::cout << "ite: " << ite << "\n";
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
@@ -309,16 +324,176 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
 
       // change here for the element wise implicit
 
-      // create the matrix using flux function
-      
-      // invert the matrix
-      
-      // multiply with the rhs to obtain the delta u, and update the solution
+      // for each element, create a local matrix, and update the solution by solving resulting linear system
+      for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
+      {
+        // create the matrix using flux function for each element
+        for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) magicA[j] = 0;
+        for ( int j = 0; j < params.porder+1; j++ )
+        {
+          for ( int k = 0; k < params.porder+1; k++ )
+          {
+            double u_vel, v_vel, p, H;
+            int i_block;
+            for ( int l = 0; l < params.nvar; l++ )
+              loc_u[l] = (j*(params.porder+1)+k)*params.columnL + l*params.nelem + i_elem;
+            u_vel = u[loc_u[1]]/u[loc_u[0]];
+            v_vel = u[loc_u[2]]/u[loc_u[0]];
+            p = (gammaVal-1)*(u[loc_u[3]]-0.5*u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+u[loc_u[3]])/u[loc_u[0]];
+            //F jacob
+            i_block = k*params.nvar;
+            Fblock[i_block + 0] = 0;
+            Fblock[i_block + 1] = 1;
+            Fblock[i_block + 2] = 0;
+            Fblock[i_block + 3] = 0;
+            i_block += params.nvar*(params.porder+1);
+            Fblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - u_vel*u_vel;
+            Fblock[i_block + 1] = (3-gammaVal)*u_vel;
+            Fblock[i_block + 2] = (1-gammaVal)*v_vel;
+            Fblock[i_block + 3] = (1-gammaVal);
+            i_block += params.nvar*(params.porder+1);
+            Fblock[i_block + 0] = -u_vel*v_vel;
+            Fblock[i_block + 1] = v_vel;
+            Fblock[i_block + 2] = u_vel;
+            Fblock[i_block + 3] = 0;
+            i_block += params.nvar*(params.porder+1);
+            Fblock[i_block + 0] = ((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*u_vel;
+            Fblock[i_block + 1] = H + (1-gammaVal)*u_vel*u_vel;
+            Fblock[i_block + 2] = (1-gammaVal)*u_vel*v_vel;
+            Fblock[i_block + 3] = gammaVal*u_vel;
 
+            for ( int l = 0; l < params.nvar; l++ )
+              loc_u[l] = (k*(params.porder+1)+j)*params.columnL + l*params.nelem + i_elem;
+            u_vel = u[loc_u[1]]/u[loc_u[0]];
+            v_vel = u[loc_u[2]]/u[loc_u[0]];
+            p = (gammaVal-1)*(u[loc_u[3]]-0.5*u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+u[loc_u[3]])/u[loc_u[0]];
+            //G jacob
+            i_block = k*params.nvar;
+            Gblock[i_block + 0] = 0;
+            Gblock[i_block + 1] = 0;
+            Gblock[i_block + 2] = 1;
+            Gblock[i_block + 3] = 0;
+            i_block += params.nvar*(params.porder+1);
+            Gblock[i_block + 0] = -u_vel*v_vel;
+            Gblock[i_block + 1] = v_vel;
+            Gblock[i_block + 2] = u_vel;
+            Gblock[i_block + 3] = 0;
+            i_block += params.nvar*(params.porder+1);
+            Gblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - v_vel*v_vel;
+            Gblock[i_block + 1] = (1-gammaVal)*u_vel;
+            Gblock[i_block + 2] = (3-gammaVal)*v_vel;
+            Gblock[i_block + 3] = (1-gammaVal);
+            i_block += params.nvar*(params.porder+1);
+            Gblock[i_block + 0] = ((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
+            Gblock[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
+            Gblock[i_block + 2] = H + (1-gammaVal)*v_vel*v_vel;
+            Gblock[i_block + 3] = gammaVal*v_vel;
+
+            //for ( i_Fblock = 0; i_Fblock < params.nvar; i_Fblock++ )
+              //for ( j_Fblock = k*params.nvar; j_Fblock < (k+1)*params.nvar; j_Fblock++ )
+                //Fblock[i_Fblock*params.nvar*(params.porder+1)+j_Fblock] = 0;
+          }
+          for ( int k = 0; k < params.porder+1; k++ )
+          {
+            //multiply F/Gblock with correct coeffs and add it to the magicA
+            int i_magicA;
+            // add Fblock to magicA
+            for ( int l = 0; l < params.porder+1; l++ )
+            {
+              for ( int ii = 0; ii < params.nvar; ii ++ )
+              {
+                for ( int jj = 0; jj < params.nvar; jj++ )
+                {
+                  i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
+                           + j*(params.porder+1)*params.nvar;
+                  //magicA[i_magicA+l*params.nvar+ii*params.nse*params.nvar+jj] 
+                  //  += Fblock[ii*params.nvar*(params.porder+1)+jj]
+                  //    *( lagrDerivs[ii*(params.porder+1)+jj]
+                  //     - lagrInterL[jj]*hL[ii]
+                  //     - lagrInterR[jj]*hR[ii] );
+                }
+              }
+            }
+            // add Gblock to magicA
+            for ( int l = 0; l < params.porder+1; l++ )
+            {
+              for ( int ii = 0; ii < params.nvar; ii ++ )
+              {
+                for ( int jj = 0; jj < params.nvar; jj++ )
+                {
+                  i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
+                           + k*params.nvar;
+                  //magicA[i_magicA+l*params.nvar*(params.porder+1)+ii*params.nse*params.nvar+jj] 
+                  //  += Gblock[ii*params.nvar*(params.porder+1)+jj]
+                  //    *( lagrDerivs[ii*(params.porder+1)+jj]
+                  //     - lagrInterL[jj]*hL[ii]
+                  //     - lagrInterR[jj]*hR[ii] );
+                }
+              }
+            }
+          }
+        }
+        // add the 1/dt to the diagonal
+        for ( int j = 0; j < params.nvar*params.nse; j++ )
+        {
+          magicA[j*params.nvar*params.nse+j] += 1/params.dt;
+        }
+        // rhs; u is assigned as rhs temporarily after update func call 
+        for ( int j = 0; j < params.nvar; j++ )
+        {
+          for ( int k = 0; k < params.nse; k++ )
+          {
+            rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem];
+          }
+        }
+        // invert the matrix
+
+        int N = params.nse*params.nvar;
+        int *IPIV = new int[N+1];
+        int LWORK = N*N;
+        double *WORK = new double[LWORK];
+        int INFO;
+
+        //std::cout << "invert A\n";
+        INFO = LAPACKE_dgetrf(LAPACK_ROW_MAJOR,N,N,magicA,N,IPIV);
+        //std::cout << INFO << "\n";
+        INFO = LAPACKE_dgetri(LAPACK_ROW_MAJOR,N,magicA,N,IPIV);//,WORK,&LWORK);
+        //std::cout << INFO << "\n";
+        delete IPIV;
+        delete WORK;
+
+        // multiply with the rhs to obtain the delta u, and update the solution
+        for ( int j = 0; j < params.nvar*params.nse; j++ ) dummyU[j] = 0;
+        for ( int j = 0; j < params.nvar*params.nse; j++ )
+        {
+          for ( int k = 0; k < params.nvar*params.nse; k++ )
+          {
+            dummyU[j] += magicA[j*params.nvar*params.nse+k]*rhs[k];
+          }
+        }
+
+        for ( int j = 0; j < params.nvar; j++ )
+        {
+          for ( int k = 0; k < params.nse; k++ )
+          {
+            //rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem];
+            u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem] 
+                                                      + alpha[i]*dummyU[k*params.nvar+j];
+          }
+        }
+
+      }//for each element
+
+
+/*
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
+*/
+
 
 
 /*
