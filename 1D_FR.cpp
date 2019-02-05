@@ -298,15 +298,17 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   int *loc_u = new int[params.nvar];
   double *dummyU = new double[params.nvar*params.nse];
 
-  std::cout << "main loop begins\n";
+  std::cout << "main loop begins\nite begin";
   //std::ofstream fface;
   //fface.open("f_face");
   //std::ofstream uvals;
   //uvals.open("u_vals");
+  std::ofstream fmagicA;
+  fmagicA.open("magicA");
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "ite: " << ite << "\n";
+    std::cout << "\rite: " << ite;
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
@@ -337,10 +339,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             int i_block;
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (j*(params.porder+1)+k)*params.columnL + l*params.nelem + i_elem;
-            u_vel = u[loc_u[1]]/u[loc_u[0]];
-            v_vel = u[loc_u[2]]/u[loc_u[0]];
-            p = (gammaVal-1)*(u[loc_u[3]]-0.5*u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+u[loc_u[3]])/u[loc_u[0]];
+            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
+            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
+            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
             //F jacob
             i_block = k*params.nvar;
             Fblock[i_block + 0] = 0;
@@ -353,7 +355,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             Fblock[i_block + 2] = (1-gammaVal)*v_vel;
             Fblock[i_block + 3] = (1-gammaVal);
             i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] = -u_vel*v_vel;
+            Fblock[i_block + 0] =-u_vel*v_vel;
             Fblock[i_block + 1] = v_vel;
             Fblock[i_block + 2] = u_vel;
             Fblock[i_block + 3] = 0;
@@ -365,10 +367,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
 
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (k*(params.porder+1)+j)*params.columnL + l*params.nelem + i_elem;
-            u_vel = u[loc_u[1]]/u[loc_u[0]];
-            v_vel = u[loc_u[2]]/u[loc_u[0]];
-            p = (gammaVal-1)*(u[loc_u[3]]-0.5*u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+u[loc_u[3]])/u[loc_u[0]];
+            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
+            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
+            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
             //G jacob
             i_block = k*params.nvar;
             Gblock[i_block + 0] = 0;
@@ -376,7 +378,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             Gblock[i_block + 2] = 1;
             Gblock[i_block + 3] = 0;
             i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] = -u_vel*v_vel;
+            Gblock[i_block + 0] =-u_vel*v_vel;
             Gblock[i_block + 1] = v_vel;
             Gblock[i_block + 2] = u_vel;
             Gblock[i_block + 3] = 0;
@@ -408,11 +410,11 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
                 {
                   i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
                            + j*(params.porder+1)*params.nvar;
-                  //magicA[i_magicA+l*params.nvar+ii*params.nse*params.nvar+jj] 
-                  //  += Fblock[ii*params.nvar*(params.porder+1)+jj]
-                  //    *( lagrDerivs[ii*(params.porder+1)+jj]
-                  //     - lagrInterL[jj]*hL[ii]
-                  //     - lagrInterR[jj]*hR[ii] );
+                  magicA[i_magicA+l*params.nvar+ii*params.nse*params.nvar+jj] 
+                    += Fblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
+                      *( lagrDerivs[k*(params.porder+1)+l]
+                       - lagrInterL[l]*hL[k]
+                       - lagrInterR[l]*hR[k] );
                 }
               }
             }
@@ -425,11 +427,11 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
                 {
                   i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
                            + k*params.nvar;
-                  //magicA[i_magicA+l*params.nvar*(params.porder+1)+ii*params.nse*params.nvar+jj] 
-                  //  += Gblock[ii*params.nvar*(params.porder+1)+jj]
-                  //    *( lagrDerivs[ii*(params.porder+1)+jj]
-                  //     - lagrInterL[jj]*hL[ii]
-                  //     - lagrInterR[jj]*hR[ii] );
+                  magicA[i_magicA+l*params.nvar*(params.porder+1)+ii*params.nse*params.nvar+jj] 
+                    += Gblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
+                     *( lagrDerivs[k*(params.porder+1)+l]
+                      - lagrInterL[l]*hL[k]
+                      - lagrInterR[l]*hR[k] );
                 }
               }
             }
@@ -440,6 +442,24 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         {
           magicA[j*params.nvar*params.nse+j] += 1/params.dt;
         }
+
+
+
+    // TEMP- write magicA into file
+  fmagicA << i_elem << "\n";
+  for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
+  {
+    int val;
+    if ( magicA[j] != 0 ) val = 8;
+    else val = 0;
+    if ( magicA[j] != magicA[j] ) val = 2;
+    //fmagicA << magicA[j] << " "; if ( (j+1)%params.nse*params.nvar == 0 ) fmagicA << "\n";
+    fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+  }
+  fmagicA << "\n";
+
+
+
         // rhs; u is assigned as rhs temporarily after update func call 
         for ( int j = 0; j < params.nvar; j++ )
         {
@@ -458,11 +478,26 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
 
         //std::cout << "invert A\n";
         INFO = LAPACKE_dgetrf(LAPACK_ROW_MAJOR,N,N,magicA,N,IPIV);
-        //std::cout << INFO << "\n";
+        if ( INFO != 0 ) {std::cout << "elem# " << i_elem << " info: " << INFO << "\n\n";
+        std::cout << u[i_elem];}
         INFO = LAPACKE_dgetri(LAPACK_ROW_MAJOR,N,magicA,N,IPIV);//,WORK,&LWORK);
-        //std::cout << INFO << "\n";
+        if ( INFO != 0 ) std::cout << "elem# " << i_elem << " info: " << INFO << "\n\n";
         delete IPIV;
         delete WORK;
+
+
+    // TEMP- write INVERTED magicA into file
+  fmagicA << i_elem << "\n";
+  for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
+  {
+    int val;
+    if ( magicA[j] != 0 ) val = 8;
+    else val = 0;
+    if ( magicA[j] != magicA[j] ) val = 2;
+    //fmagicA << magicA[j] << " "; if ( (j+1)%params.nse*params.nvar == 0 ) fmagicA << "\n";
+    fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+  }
+  fmagicA << "\n";
 
         // multiply with the rhs to obtain the delta u, and update the solution
         for ( int j = 0; j < params.nvar*params.nse; j++ ) dummyU[j] = 0;
@@ -478,13 +513,12 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         {
           for ( int k = 0; k < params.nse; k++ )
           {
-            //rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem];
             u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem] 
                                                       + alpha[i]*dummyU[k*params.nvar+j];
           }
         }
 
-      }//for each element
+      }//for each element local implicit update
 
 
 /*
@@ -494,6 +528,15 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       }
 */
 
+      // NaN CHECK
+      double errr=0.0;
+      for ( int j = 0; j < params.nse*params.columnL; j++ ) errr += u[j];
+      if ( errr != errr ) 
+      {
+        std::cout << "\nthere is a nan somewhere\n";
+        for ( int j = 0; j < params.nse*params.columnL; j++ ) u[j] = old_u[j];
+        goto jumptowrite;
+      }
 
 
 /*
@@ -534,6 +577,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   std::cout << log10(L/params.nelem) << "\n";
 */
 
+  jumptowrite: std::cout << "\njumped to write the last state\n";
   std::ofstream solution;
   solution.open("solution.csv");
   double x, y, x_L =-10, x_R = 10, y_B =-10, y_T = 10;
@@ -562,7 +606,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   }
 
   double errr=0.0;
-  for ( int i = 0; i < params.columnL*params.nvar; i++ ) errr += u[i];
+  for ( int i = 0; i < params.columnL*params.nse; i++ ) errr += u[i];
   if ( errr != errr ) std::cout << "there is a nan somewhere\n";
 
   return 0;
