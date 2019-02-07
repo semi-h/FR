@@ -121,6 +121,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // 2N storage RK
   double *old_u;
   old_u = new double [params.nse*params.columnL];
+  double *u_curr;
+  u_curr = new double [params.nse*params.columnL];
 
   std::cout << "ndim: " << params.ndim << "\n";
   std::cout << "polynomial order is: " << params.porder << "\n";
@@ -298,7 +300,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   int *loc_u = new int[params.nvar];
   double *dummyU = new double[params.nvar*params.nse];
 
-  std::cout << "main loop begins\nite begin";
+  std::cout << "main loop begins\nite: ";
   //std::ofstream fface;
   //fface.open("f_face");
   //std::ofstream uvals;
@@ -308,7 +310,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "\rite: " << ite;
+    std::cout << "\nite: " << ite;
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
@@ -320,7 +322,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
       computeFlux(&params, u_face, f_face);
-
+for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
       //update solution
       update(&params, u, f, g, f_face, lagrDerivs, hL, hR);
 
@@ -339,10 +341,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             int i_block;
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (j*(params.porder+1)+k)*params.columnL + l*params.nelem + i_elem;
-            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
-            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
-            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
+            u_vel = u_curr[loc_u[1]]/u_curr[loc_u[0]];
+            v_vel = u_curr[loc_u[2]]/u_curr[loc_u[0]];
+            p = (gammaVal-1)*(u_curr[loc_u[3]]-0.5*u_curr[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+u_curr[loc_u[3]])/u_curr[loc_u[0]];
             //F jacob
             i_block = k*params.nvar;
             Fblock[i_block + 0] = 0;
@@ -353,7 +355,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             Fblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - u_vel*u_vel;
             Fblock[i_block + 1] = (3-gammaVal)*u_vel;
             Fblock[i_block + 2] = (1-gammaVal)*v_vel;
-            Fblock[i_block + 3] = (1-gammaVal);
+            Fblock[i_block + 3] = (gammaVal-1);
             i_block += params.nvar*(params.porder+1);
             Fblock[i_block + 0] =-u_vel*v_vel;
             Fblock[i_block + 1] = v_vel;
@@ -367,10 +369,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
 
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (k*(params.porder+1)+j)*params.columnL + l*params.nelem + i_elem;
-            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
-            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
-            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
+            u_vel = u_curr[loc_u[1]]/u_curr[loc_u[0]];
+            v_vel = u_curr[loc_u[2]]/u_curr[loc_u[0]];
+            p = (gammaVal-1)*(u_curr[loc_u[3]]-0.5*u_curr[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+u_curr[loc_u[3]])/u_curr[loc_u[0]];
             //G jacob
             i_block = k*params.nvar;
             Gblock[i_block + 0] = 0;
@@ -386,7 +388,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             Gblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - v_vel*v_vel;
             Gblock[i_block + 1] = (1-gammaVal)*u_vel;
             Gblock[i_block + 2] = (3-gammaVal)*v_vel;
-            Gblock[i_block + 3] = (1-gammaVal);
+            Gblock[i_block + 3] = (gammaVal-1);
             i_block += params.nvar*(params.porder+1);
             Gblock[i_block + 0] = ((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
             Gblock[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
@@ -404,13 +406,13 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             // add Fblock to magicA
             for ( int l = 0; l < params.porder+1; l++ )
             {
-              for ( int ii = 0; ii < params.nvar; ii ++ )
+              i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
+                       + j*(params.porder+1)*params.nvar + l*params.nvar;
+              for ( int ii = 0; ii < params.nvar; ii++ )
               {
                 for ( int jj = 0; jj < params.nvar; jj++ )
                 {
-                  i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
-                           + j*(params.porder+1)*params.nvar;
-                  magicA[i_magicA+l*params.nvar+ii*params.nse*params.nvar+jj] 
+                  magicA[i_magicA+ii*params.nse*params.nvar+jj] 
                     += Fblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                       *( lagrDerivs[k*(params.porder+1)+l]
                        - lagrInterL[l]*hL[k]
@@ -421,13 +423,13 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
             // add Gblock to magicA
             for ( int l = 0; l < params.porder+1; l++ )
             {
-              for ( int ii = 0; ii < params.nvar; ii ++ )
+              i_magicA = (k*(params.porder+1)+j)*params.nvar*params.nvar*params.nse
+                       + j*params.nvar + l*params.nvar*(params.porder+1);
+              for ( int ii = 0; ii < params.nvar; ii++ )
               {
                 for ( int jj = 0; jj < params.nvar; jj++ )
                 {
-                  i_magicA = (j*(params.porder+1)+k)*params.nvar*params.nvar*params.nse
-                           + k*params.nvar;
-                  magicA[i_magicA+l*params.nvar*(params.porder+1)+ii*params.nse*params.nvar+jj] 
+                  magicA[i_magicA+ii*params.nse*params.nvar+jj] 
                     += Gblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                      *( lagrDerivs[k*(params.porder+1)+l]
                       - lagrInterL[l]*hL[k]
@@ -444,20 +446,21 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         }
 
 
-
-    // TEMP- write magicA into file
-  fmagicA << i_elem << "\n";
-  for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
-  {
-    int val;
-    if ( magicA[j] != 0 ) val = 8;
-    else val = 0;
-    if ( magicA[j] != magicA[j] ) val = 2;
-    //fmagicA << magicA[j] << " "; if ( (j+1)%params.nse*params.nvar == 0 ) fmagicA << "\n";
-    fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
-  }
-  fmagicA << "\n";
-
+/*
+        // TEMP- write magicA into file
+        fmagicA << i_elem << "\n";
+        for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
+        {
+          int val;
+          if ( magicA[j] != 0 ) val = 8;
+          else val = 0;
+          if ( magicA[j] != magicA[j] ) val = 666666;
+          fmagicA << std::scientific << magicA[j] << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+          if ( (j+1)%(params.nse*params.nvar*params.nvar) == 0 ) fmagicA << "\n";
+          //fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+        }
+        fmagicA << "\n";
+*/
 
 
         // rhs; u is assigned as rhs temporarily after update func call 
@@ -472,59 +475,54 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
 
         int N = params.nse*params.nvar;
         int *IPIV = new int[N+1];
-        int LWORK = N*N;
-        double *WORK = new double[LWORK];
         int INFO;
 
-        //std::cout << "invert A\n";
-        INFO = LAPACKE_dgetrf(LAPACK_ROW_MAJOR,N,N,magicA,N,IPIV);
-        if ( INFO != 0 ) {std::cout << "elem# " << i_elem << " info: " << INFO << "\n\n";
-        std::cout << u[i_elem];}
-        INFO = LAPACKE_dgetri(LAPACK_ROW_MAJOR,N,magicA,N,IPIV);//,WORK,&LWORK);
-        if ( INFO != 0 ) std::cout << "elem# " << i_elem << " info: " << INFO << "\n\n";
+        //LAPACKE_dgesv (int matrix_layout, lapack_int n, lapack_int nrhs, double *a, lapack_int lda, lapack_int *ipiv, double *b, lapack_int ldb)
+        INFO = LAPACKE_dgesv(LAPACK_ROW_MAJOR,N,1,magicA,N,IPIV,rhs,1);
+        //if ( INFO != 0 ) {std::cout << "dgesv, elem# " << i_elem << " info: " << INFO << "\n\n";
+        //for ( int j = 0; j<params.nvar*params.nse; j++ ) if(rhs[j]!=rhs[j]) std::cout << rhs[j] << " ";
+        //std::cout << "\n";}
+
         delete IPIV;
-        delete WORK;
-
-
-    // TEMP- write INVERTED magicA into file
-  fmagicA << i_elem << "\n";
-  for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
-  {
-    int val;
-    if ( magicA[j] != 0 ) val = 8;
-    else val = 0;
-    if ( magicA[j] != magicA[j] ) val = 2;
-    //fmagicA << magicA[j] << " "; if ( (j+1)%params.nse*params.nvar == 0 ) fmagicA << "\n";
-    fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
-  }
-  fmagicA << "\n";
-
-        // multiply with the rhs to obtain the delta u, and update the solution
-        for ( int j = 0; j < params.nvar*params.nse; j++ ) dummyU[j] = 0;
-        for ( int j = 0; j < params.nvar*params.nse; j++ )
-        {
-          for ( int k = 0; k < params.nvar*params.nse; k++ )
-          {
-            dummyU[j] += magicA[j*params.nvar*params.nse+k]*rhs[k];
-          }
-        }
 
         for ( int j = 0; j < params.nvar; j++ )
         {
           for ( int k = 0; k < params.nse; k++ )
           {
             u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem] 
-                                                      + alpha[i]*dummyU[k*params.nvar+j];
+                                                      + alpha[i]*rhs[k*params.nvar+j];
           }
         }
 
       }//for each element local implicit update
 
 
-/*
+/*      //explicit update
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
+      }
+*/
+/*
+std::cout << "\n";
+std::cout << old_u[0*params.columnL+1*params.nelem+0]/old_u[0*params.columnL+0*params.nelem+0];
+std::cout << "\n";
+std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*params.nelem+0];
+
+      double eps = 0.0000001;
+      old_u[0*params.columnL+0*params.nelem+1222] += eps;
+      superFunc(&params, old_u, f, g, u_face, f_face, lagrInterL, lagrInterR);
+      computeFlux(&params, u_face, f_face);
+      update(&params, old_u, f, g, f_face, lagrDerivs, hL, hR);
+      std::cout << "\nJACOBIAN\n";
+      for ( int j = 0; j < params.nse; j++ )
+      {
+        for ( int k = 0; k < params.nvar; k++ )
+        {
+          std::cout << ( old_u[j*params.columnL+k*params.nelem+1222]
+                       - u[j*params.columnL+k*params.nelem+1222] )/eps << "\n";
+        }
+        std::cout << "\n";
       }
 */
 
@@ -534,7 +532,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       if ( errr != errr ) 
       {
         std::cout << "\nthere is a nan somewhere\n";
-        for ( int j = 0; j < params.nse*params.columnL; j++ ) u[j] = old_u[j];
+        for ( int j = 0; j < params.nse*params.columnL; j++ ) u[j] = u_curr[j];
         goto jumptowrite;
       }
 
@@ -553,8 +551,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       }
       uvals << "\n";
 */
-    }
-  }
+    } // R-K loop
+  } // time iteration
 
 
 /*
@@ -683,16 +681,12 @@ void superFunc( essential* params, double *u, double *f, double *g,
           indx_T = (3*(params->porder+1)-1-i)*params->columnL+loc_q[k];//+i_elem;
           u_face[indx_L] += lagrInterL[i]*u[indx_elem];
           f_face[indx_L] += lagrInterL[i]*f[indx_elem];
-          //g_face[indx_L] += lagrInterL[i]*g[indx_elem];
           u_face[indx_R] += lagrInterR[i]*u[indx_elem];
           f_face[indx_R] += lagrInterR[i]*f[indx_elem];
-          //g_face[indx_R] += lagrInterR[i]*g[indx_elem];
           u_face[indx_B] += lagrInterL[j]*u[indx_elem];
           f_face[indx_B] += lagrInterL[j]*g[indx_elem];//from g
-          //g_face[indx_B] += lagrInterL[j]*g[indx_elem];
           u_face[indx_T] += lagrInterR[j]*u[indx_elem];
           f_face[indx_T] += lagrInterR[j]*g[indx_elem];//from g
-          //g_face[indx_T] += lagrInterR[j]*g[indx_elem];
         }
       }
 
