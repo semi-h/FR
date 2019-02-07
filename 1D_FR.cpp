@@ -73,10 +73,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.04;
+  params.dt     = 0.02;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 2500;
-  params.nRK = 4; //1 || 4
+  params.maxIte = 5000;
+  params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
 
@@ -362,8 +362,10 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
             Fblock[i_block + 2] = u_vel;
             Fblock[i_block + 3] = 0;
             i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] = ((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*u_vel;
-            Fblock[i_block + 1] = H + (1-gammaVal)*u_vel*u_vel;
+            Fblock[i_block + 0] =-u_vel*(gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
+            //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*u_vel;
+            Fblock[i_block + 1] = gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]] - (gammaVal-1)*0.5*(3*u_vel*u_vel+v_vel*v_vel);
+            //H + (1-gammaVal)*u_vel*u_vel;
             Fblock[i_block + 2] = (1-gammaVal)*u_vel*v_vel;
             Fblock[i_block + 3] = gammaVal*u_vel;
 
@@ -390,9 +392,11 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
             Gblock[i_block + 2] = (3-gammaVal)*v_vel;
             Gblock[i_block + 3] = (gammaVal-1);
             i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] = ((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
+            Gblock[i_block + 0] =-v_vel*(gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
+            //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
             Gblock[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
-            Gblock[i_block + 2] = H + (1-gammaVal)*v_vel*v_vel;
+            Gblock[i_block + 2] = gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]] - (gammaVal-1)*0.5*(u_vel*u_vel+3*v_vel*v_vel);
+            //H + (1-gammaVal)*v_vel*v_vel;
             Gblock[i_block + 3] = gammaVal*v_vel;
 
             //for ( i_Fblock = 0; i_Fblock < params.nvar; i_Fblock++ )
@@ -509,8 +513,8 @@ std::cout << old_u[0*params.columnL+1*params.nelem+0]/old_u[0*params.columnL+0*p
 std::cout << "\n";
 std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*params.nelem+0];
 
-      double eps = 0.0000001;
-      old_u[0*params.columnL+0*params.nelem+1222] += eps;
+      double eps = 0.000001;
+      old_u[0*params.columnL+0*params.nelem+1] += eps;
       superFunc(&params, old_u, f, g, u_face, f_face, lagrInterL, lagrInterR);
       computeFlux(&params, u_face, f_face);
       update(&params, old_u, f, g, f_face, lagrDerivs, hL, hR);
@@ -519,8 +523,8 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       {
         for ( int k = 0; k < params.nvar; k++ )
         {
-          std::cout << ( old_u[j*params.columnL+k*params.nelem+1222]
-                       - u[j*params.columnL+k*params.nelem+1222] )/eps << "\n";
+          std::cout << ( old_u[j*params.columnL+k*params.nelem+1]
+                       - u[j*params.columnL+k*params.nelem+1] )/eps << "\n";
         }
         std::cout << "\n";
       }
