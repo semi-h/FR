@@ -310,7 +310,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "\nite: " << ite;
+    std::cout << "\rite: " << ite;
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
@@ -341,10 +341,10 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
             int i_block;
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (j*(params.porder+1)+k)*params.columnL + l*params.nelem + i_elem;
-            u_vel = u_curr[loc_u[1]]/u_curr[loc_u[0]];
-            v_vel = u_curr[loc_u[2]]/u_curr[loc_u[0]];
-            p = (gammaVal-1)*(u_curr[loc_u[3]]-0.5*u_curr[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+u_curr[loc_u[3]])/u_curr[loc_u[0]];
+            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
+            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
+            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
             //F jacob
             i_block = k*params.nvar;
             Fblock[i_block + 0] = 0;
@@ -362,19 +362,19 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
             Fblock[i_block + 2] = u_vel;
             Fblock[i_block + 3] = 0;
             i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] =-u_vel*(gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
+            Fblock[i_block + 0] =-u_vel*(gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
             //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*u_vel;
-            Fblock[i_block + 1] = gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]] - (gammaVal-1)*0.5*(3*u_vel*u_vel+v_vel*v_vel);
+            Fblock[i_block + 1] = gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]] - (gammaVal-1)*0.5*(3*u_vel*u_vel+v_vel*v_vel);
             //H + (1-gammaVal)*u_vel*u_vel;
             Fblock[i_block + 2] = (1-gammaVal)*u_vel*v_vel;
             Fblock[i_block + 3] = gammaVal*u_vel;
 
             for ( int l = 0; l < params.nvar; l++ )
               loc_u[l] = (k*(params.porder+1)+j)*params.columnL + l*params.nelem + i_elem;
-            u_vel = u_curr[loc_u[1]]/u_curr[loc_u[0]];
-            v_vel = u_curr[loc_u[2]]/u_curr[loc_u[0]];
-            p = (gammaVal-1)*(u_curr[loc_u[3]]-0.5*u_curr[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+u_curr[loc_u[3]])/u_curr[loc_u[0]];
+            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
+            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
+            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
             //G jacob
             i_block = k*params.nvar;
             Gblock[i_block + 0] = 0;
@@ -392,10 +392,10 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
             Gblock[i_block + 2] = (3-gammaVal)*v_vel;
             Gblock[i_block + 3] = (gammaVal-1);
             i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] =-v_vel*(gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
+            Gblock[i_block + 0] =-v_vel*(gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
             //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
             Gblock[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
-            Gblock[i_block + 2] = gammaVal*u_curr[loc_u[3]]/u_curr[loc_u[0]] - (gammaVal-1)*0.5*(u_vel*u_vel+3*v_vel*v_vel);
+            Gblock[i_block + 2] = gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]] - (gammaVal-1)*0.5*(u_vel*u_vel+3*v_vel*v_vel);
             //H + (1-gammaVal)*v_vel*v_vel;
             Gblock[i_block + 3] = gammaVal*v_vel;
 
@@ -500,13 +500,14 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
 
       }//for each element local implicit update
 
-
-/*      //explicit update
+/*
+      //explicit update
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
 */
+
 /*
 std::cout << "\n";
 std::cout << old_u[0*params.columnL+1*params.nelem+0]/old_u[0*params.columnL+0*params.nelem+0];
