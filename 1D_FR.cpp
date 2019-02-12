@@ -48,44 +48,18 @@ void computeFlux(essential* params, double *u_LR, double *f_LR);
 #include <lapacke.h>
 #include <lapacke_utils.h>
 #include <cblas.h>
-int dene ()
-{
-   double a[5][3] = {1,1,1,2,3,4,3,5,2,4,2,5,5,4,3};
-   double b[5][2] = {-10,-3,12,14,14,12,16,16,18,16};
-   lapack_int info,m,n,lda,ldb,nrhs;
-   int i,j;
-
-   m = 5;
-   n = 3;
-   nrhs = 2;
-   lda = 3;
-   ldb = 2;
-
-   info = LAPACKE_dgels(LAPACK_ROW_MAJOR,'N',m,n,nrhs,*a,lda,*b,ldb);
-
-   for(i=0;i<n;i++)
-   {
-      for(j=0;j<nrhs;j++)
-      {
-         printf("%lf ",b[i][j]);
-      }
-      printf("\n");
-   }
-   return(info);
-}
 
 int main()
 {
-  dene();
   double L, jacob, dt;
   L = 200;
   essential params;
 
   params.nvar   = 1;
-  params.porder = 2; // 0 || 1 || 2 || 3
-  params.dt     = 0.25;
+  params.porder = 3; // 0 || 1 || 2 || 3
+  params.dt     = 0.16;
   params.nelem  = 100;
-  params.maxIte = 8000;
+  params.maxIte = 12500;
   params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
@@ -177,9 +151,9 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob;
-                   //- lagrInterL[k]*hL[j]/params.jacob
-                   //- lagrInterR[k]*hR[j]/params.jacob;
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
+                   - lagrInterL[k]*hL[j]/params.jacob
+                   - lagrInterR[k]*hR[j]/params.jacob;
                    //- 0.5*lagrInterR[k]*hR[j];
         //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         //else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
@@ -331,10 +305,11 @@ int main()
 
   double eps = 0.000001;
   double *dummyU = new double[params.porder+1];
-  std::cout << "main loop begins\n";
+  std::cout << "main loop begins\nite";
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
+    std::cout << "\rite: " << ite;
     for ( int i = 0; i < params.columnL*(params.porder+1); i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
@@ -354,6 +329,8 @@ int main()
         u[j] = old_u[j] + alpha[i]*params.dt*u[j];
       }
       */
+
+      // local matrix, for element-wise implicit only
       /*
       for ( int j = 0; j < params.columnL; j++ )
       {
@@ -374,6 +351,9 @@ int main()
         }
       }
       */
+
+
+      
       for ( int j = 0; j < params.columnL; j++ )
       {
         for ( int k = 0; k < params.porder+1; k++ )
@@ -447,12 +427,24 @@ int main()
         u[j] = old_u[j] + alpha[i]*u[j];
       }
       */
-    }
-  }
 
+      double errr=0.0;
+      for ( int j = 0; j < (params.porder+1)*params.columnL; j++ ) errr += u[j];
+      if ( errr != errr ) 
+      {
+        std::cout << "\nthere is a nan somewhere\n";
+        for ( int j = 0; j < (params.porder+1)*params.columnL; j++ ) u[j] = old_u[j];
+        goto jumptowrite;
+      }
 
+    }//RK loop
+  }//iteration
+
+  jumptowrite: std::cout << "\n";
   std::ofstream solution;
   solution.open("solution");
+  std::ofstream solutionIC;
+  solutionIC.open("solutionIC");
   for ( int i = 0; i < params.nelem; i++ )
   { //print the first var at the 0th node in each element, for second var add +nelem
     //solution << u[0*params.columnL + i] << "\n";
@@ -480,6 +472,7 @@ int main()
     solution << x << " " << u[j*params.columnL+i] << "\n";
     //u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
     error += pow(u[j*params.columnL + i]-1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2)) , 2);
+    solutionIC << x << " " << 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2)) << "\n";
     }
     value = 0;
     for ( int k = 0; k < params.porder+1; k++ )
@@ -489,145 +482,18 @@ int main()
     solution << (i+1)*L/params.nelem-L/2 << " " << value << "\n";
   }
 
-  std::cout << "error " << log10(sqrt(error)/sqrt(params.nelem*(params.porder+1))) << "\n";
-  std::cout << log10(L/params.nelem) << "\n";
+  std::cout << "error: " << log10(sqrt(error)/sqrt(params.nelem*(params.porder+1))) << "\n";
+  std::cout << "log10(dx): " << log10(L/params.nelem) << "\n";
 
   return 0;
 }
 
 
 
-
-
-
-void get_flux(double *q, double *flux)
-{
-  double u, p;
-
-  flux[0] = q[1];
-  u = q[1]/q[0];
-  p = (gammaVal-1)*(q[2]-0.5*q[1]*u);
-  flux[1] = q[1]*u+p;
-  flux[2] = (q[2]+p)*u;
-  return;
-}
-
-void roe_flux(double *q_L, double *q_R, double *fluxI)
-{
-
-  double p_L, p_R, H_L, H_R;
-  p_L = (gammaVal-1)*(q_L[2]-0.5*pow(q_L[1],2)/q_L[0]);
-  p_R = (gammaVal-1)*(q_R[2]-0.5*pow(q_R[1],2)/q_R[0]);
-  H_L = (q_L[2]+p_L)/q_L[0];
-  H_R = (q_R[2]+p_R)/q_R[0];
-
-  double rho_hat, u_hat, H_hat, a_hat;
-
-  rho_hat = sqrt(q_L[0]*q_R[0]);
-  u_hat   = (sqrt(q_L[0])*q_L[1]/q_L[0] + sqrt(q_R[0])*q_R[1]/q_R[0])
-           /(sqrt(q_L[0]) + sqrt(q_R[0]));
-  H_hat   = (sqrt(q_L[0])*H_L + sqrt(q_R[0])*H_R)
-           /(sqrt(q_L[0]) + sqrt(q_R[0]));
-  a_hat   = sqrt((gammaVal-1)*(H_hat-0.5*pow(u_hat,2)));
-
-  double lambda[3] = {u_hat, u_hat + a_hat, u_hat - a_hat};
-  for ( int i = 0; i < 3; i++ ) lambda[i] = std::abs(lambda[i]);
-
-  double r_eig[3][3];
-  r_eig[0][0] = 1; r_eig[0][1] = 1; r_eig[0][2] = 1;
-  r_eig[1][0] = u_hat; r_eig[1][1] = u_hat+a_hat; r_eig[1][2] = u_hat-a_hat;
-  r_eig[2][0] = 0.5*pow(u_hat,2); r_eig[2][1] = H_hat+a_hat*u_hat; r_eig[2][2] = H_hat-a_hat*u_hat;
-
-  double w0[3];
-  w0[0] =-(p_R-p_L)/(2*a_hat*a_hat) + q_R[0] - q_L[0];
-  w0[1] = (p_R-p_L)/(2*a_hat*a_hat)
-        + (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
-  w0[2] = (p_R-p_L)/(2*a_hat*a_hat)
-        - (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
-
-
-  double flux_L[3], flux_R[3], diss[3];
-
-  for ( int i = 0; i < 3; i++ )
-  {
-    diss[i] = 0;
-    for ( int j = 0; j < 3; j++ )
-    {
-      diss[i] += r_eig[i][j]*lambda[j]*w0[j];
-    }
-  }
-
-  get_flux(q_L, flux_L);
-  get_flux(q_R, flux_R);
-  for ( int i = 0; i < 3; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - diss[i]);
-  //fluxI[1] = 0.5*(flux_L[1] + flux_R[1] - diss[1]);
-  //fluxI[2] = 0.5*(flux_L[2] + flux_R[2] - diss[2]);
-
-  return;
-}
-
-
-void set_solnPoints(int p, double **soln_coords, double **weights)
-{
-
-  //std::cout << "hi" << std::endl;
-  *soln_coords = new double [p+1];
-  *weights = new double [p+1];
-  //std::cout << "hope you are okay" << std::endl;
-  if ( p == 0 )
-  {
-    (*soln_coords)[0] = 0;
-    (*weights)[0] = 2.0;
-  }
-  else if ( p == 1 )
-  {
-    (*soln_coords)[0] =-0.577350269189625764509148780502;
-    (*soln_coords)[1] = 0.577350269189625764509148780502;
-    (*weights)[0] = 1.0;
-    (*weights)[1] = 1.0;
-  }
-  else if ( p == 2 )
-  {//0.0011270166538
-    (*soln_coords)[0] =-0.774596669241483377035853079956;
-    (*soln_coords)[1] = 0.0;
-    (*soln_coords)[2] = 0.774596669241483377035853079956;
-    (*weights)[0] = 0.555555555555555555555555555556;
-    (*weights)[1] = 0.888888888888888888888888888889;
-    (*weights)[2] = 0.555555555555555555555555555556;
-  }
-  else if ( p == 3 )
-  {
-    (*soln_coords)[0] =-0.861136311594052575223946488893;
-    (*soln_coords)[1] =-0.339981043584856264802665759103;
-    (*soln_coords)[2] = 0.339981043584856264802665759103;
-    (*soln_coords)[3] = 0.861136311594052575223946488893;
-    (*weights)[0] = 0.347854845137453857373063949222;
-    (*weights)[1] = 0.652145154862546142626936050778;
-    (*weights)[2] = 0.652145154862546142626936050778;
-    (*weights)[3] = 0.347854845137453857373063949222;
-  }
-
-  std::cout << "solution points are: \n";
-  for (int i = 0; i < p+1; i++)
-  {
-    std::cout << (*soln_coords)[i] << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "weights associated are: \n";
-  for (int i = 0; i < p+1; i++)
-  {
-    std::cout << (*weights)[i] << " ";
-  }
-  std::cout << std::endl;
-  return;
-}
-
 void superFunc( essential* params, double *u, double *f, double *u_LR, double *f_LR, 
                 double *lagrInterL, double *lagrInterR )
 {
 
-  //int loc_q[nvar];
   int *loc_q = new int[params->nvar];
 
   double vel, p;
@@ -733,6 +599,144 @@ void update( essential *params, double *u, double *f, double *f_LR,
 }
 
 
+
+
+
+
+void get_flux(double *q, double *flux)
+{
+  double u, p;
+
+  flux[0] = q[1];
+  u = q[1]/q[0];
+  p = (gammaVal-1)*(q[2]-0.5*q[1]*u);
+  flux[1] = q[1]*u+p;
+  flux[2] = (q[2]+p)*u;
+  return;
+}
+
+void roe_flux(double *q_L, double *q_R, double *fluxI)
+{
+
+  double p_L, p_R, H_L, H_R;
+  p_L = (gammaVal-1)*(q_L[2]-0.5*pow(q_L[1],2)/q_L[0]);
+  p_R = (gammaVal-1)*(q_R[2]-0.5*pow(q_R[1],2)/q_R[0]);
+  H_L = (q_L[2]+p_L)/q_L[0];
+  H_R = (q_R[2]+p_R)/q_R[0];
+
+  double rho_hat, u_hat, H_hat, a_hat;
+
+  rho_hat = sqrt(q_L[0]*q_R[0]);
+  u_hat   = (sqrt(q_L[0])*q_L[1]/q_L[0] + sqrt(q_R[0])*q_R[1]/q_R[0])
+           /(sqrt(q_L[0]) + sqrt(q_R[0]));
+  H_hat   = (sqrt(q_L[0])*H_L + sqrt(q_R[0])*H_R)
+           /(sqrt(q_L[0]) + sqrt(q_R[0]));
+  a_hat   = sqrt((gammaVal-1)*(H_hat-0.5*pow(u_hat,2)));
+
+  double lambda[3] = {u_hat, u_hat + a_hat, u_hat - a_hat};
+  for ( int i = 0; i < 3; i++ ) lambda[i] = std::abs(lambda[i]);
+
+  double r_eig[3][3];
+  r_eig[0][0] = 1; r_eig[0][1] = 1; r_eig[0][2] = 1;
+  r_eig[1][0] = u_hat; r_eig[1][1] = u_hat+a_hat; r_eig[1][2] = u_hat-a_hat;
+  r_eig[2][0] = 0.5*pow(u_hat,2); r_eig[2][1] = H_hat+a_hat*u_hat; r_eig[2][2] = H_hat-a_hat*u_hat;
+
+  double w0[3];
+  w0[0] =-(p_R-p_L)/(2*a_hat*a_hat) + q_R[0] - q_L[0];
+  w0[1] = (p_R-p_L)/(2*a_hat*a_hat)
+        + (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
+  w0[2] = (p_R-p_L)/(2*a_hat*a_hat)
+        - (q_R[1] - q_L[1] - u_hat*(q_R[0] - q_L[0]))/(2*a_hat);
+
+
+  double flux_L[3], flux_R[3], diss[3];
+
+  for ( int i = 0; i < 3; i++ )
+  {
+    diss[i] = 0;
+    for ( int j = 0; j < 3; j++ )
+    {
+      diss[i] += r_eig[i][j]*lambda[j]*w0[j];
+    }
+  }
+
+  get_flux(q_L, flux_L);
+  get_flux(q_R, flux_R);
+  for ( int i = 0; i < 3; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - diss[i]);
+
+  return;
+}
+
+
+void set_solnPoints(int p, double **soln_coords, double **weights)
+{
+
+  //std::cout << "hi" << std::endl;
+  *soln_coords = new double [p+1];
+  *weights = new double [p+1];
+  //std::cout << "hope you are okay" << std::endl;
+  if ( p == 0 )
+  {
+    (*soln_coords)[0] = 0;
+    (*weights)[0] = 2.0;
+  }
+  else if ( p == 1 )
+  {
+    (*soln_coords)[0] =-0.577350269189625764509148780502;
+    (*soln_coords)[1] = 0.577350269189625764509148780502;
+    (*weights)[0] = 1.0;
+    (*weights)[1] = 1.0;
+  }
+  else if ( p == 2 )
+  {
+    (*soln_coords)[0] =-0.774596669241483377035853079956;
+    (*soln_coords)[1] = 0.0;
+    (*soln_coords)[2] = 0.774596669241483377035853079956;
+    (*weights)[0] = 0.555555555555555555555555555556;
+    (*weights)[1] = 0.888888888888888888888888888889;
+    (*weights)[2] = 0.555555555555555555555555555556;
+  }
+  else if ( p == 3 )
+  {
+    (*soln_coords)[0] =-0.861136311594052575223946488893;
+    (*soln_coords)[1] =-0.339981043584856264802665759103;
+    (*soln_coords)[2] = 0.339981043584856264802665759103;
+    (*soln_coords)[3] = 0.861136311594052575223946488893;
+    (*weights)[0] = 0.347854845137453857373063949222;
+    (*weights)[1] = 0.652145154862546142626936050778;
+    (*weights)[2] = 0.652145154862546142626936050778;
+    (*weights)[3] = 0.347854845137453857373063949222;
+  }
+  else if ( p == 4 )
+  {
+    (*soln_coords)[0] =-0.906179845938663992797626878299;
+    (*soln_coords)[1] =-0.5384693101056830910363144207;
+    (*soln_coords)[2] = 0.0;
+    (*soln_coords)[3] = 0.5384693101056830910363144207;
+    (*soln_coords)[4] = 0.906179845938663992797626878299;
+    (*weights)[0] = 0.23692688505618908751426404072;
+    (*weights)[1] = 0.478628670499366468041291514836;
+    (*weights)[2] = 0.568888888888888888888888888889;
+    (*weights)[3] = 0.478628670499366468041291514836;
+    (*weights)[4] = 0.23692688505618908751426404072;
+  }
+
+  std::cout << "solution points are: \n";
+  for (int i = 0; i < p+1; i++)
+  {
+    std::cout << (*soln_coords)[i] << " ";
+  }
+  std::cout << std::endl;
+
+  std::cout << "weights associated are: \n";
+  for (int i = 0; i < p+1; i++)
+  {
+    std::cout << (*weights)[i] << " ";
+  }
+  std::cout << std::endl;
+  return;
+}
+
 void set_lagrangeDerivs(int p, double *soln_coords, double **derivs)
 {
 
@@ -788,7 +792,13 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
     for ( int i = 0; i < p+1; i++ ) 
       (*hL)[i] = 0.125*(70*pow(soln_coords[i],3)-30*pow(soln_coords[i],2)-30*soln_coords[i]+6);
   }
-
+  else if ( p == 4 )
+  {
+    for ( int i = 0; i < p+1; i++ ) 
+      (*hL)[i] =-19.6875*pow(soln_coords[i],4) + 8.75*pow(soln_coords[i],3) 
+               + 13.125*pow(soln_coords[i],2) - 3.75*soln_coords[i] - 0.9375;
+  }
+  
   // uncomment below to set all 0.5 and -..
   //for ( int i = 0; i < p+1; i++ ) hL[i] = -0.5;
   for ( int i = 0; i < p+1; i++ ) (*hR)[i] = -(*hL)[p-i];
