@@ -92,6 +92,9 @@ int main()
   // 2N storage RK
   double *old_u;
   old_u = new double [(params.porder+1)*params.nelem*params.nvar];
+  // implicit rk
+  double *old_rhs;
+  old_rhs = new double [(params.porder+1)*params.nelem*params.nvar];
 
   // implicit matrix
   double *bigA;
@@ -151,14 +154,18 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob;
                    - lagrInterL[k]*hL[j]/params.jacob
                    - lagrInterR[k]*hR[j]/params.jacob;
-                   //- 0.5*lagrInterR[k]*hR[j];
         //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         //else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         if ( j == k ) bigA[loc] += 1/params.dt;
       }
+      // if only one solution point from left element is taken into account in the implicit matrix;
+      //int k = params.porder+1-1;
+      //loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
+      //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += 0.5*hL[j]/params.jacob;
+      //else bigA[loc-(params.porder+1)] += 0.5*hL[j]/params.jacob;
     }
   }
   N = params.nU;
@@ -323,6 +330,11 @@ int main()
 
       //update solution
       update(&params, u, f, f_LR, lagrDerivs, hL, hR);
+
+      // keep rhs as old
+      //if ( i == 0 ) {for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) old_rhs[j] = u[j];}
+
+
       /*
       for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
       {
@@ -359,6 +371,7 @@ int main()
         for ( int k = 0; k < params.porder+1; k++ )
         {
           RHS[j*(params.porder+1)+k] = u[k*params.columnL+j];
+          //RHS[j*(params.porder+1)+k] = old_rhs[k*params.columnL+j];
         }
       }
       int loc;
