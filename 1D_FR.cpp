@@ -73,9 +73,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.02;
+  params.dt     = 0.005;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 5000;
+  params.maxIte = 2500;
   params.nRK = 1; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
@@ -310,10 +310,14 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "\rite: " << ite;
+    std::cout << "\n ite?: " << ite;
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
+
+for ( int sub_ite = 0; sub_ite < 2; sub_ite++ )
+{
+std::cout << "\n        sub_ite: " << sub_ite;
       //std::cout << "ite: " << ite << " ";
       //superFunc creates f, u_face, and f_face arrays
       superFunc( &params, u, f, g, u_face, f_face, //g_face, 
@@ -472,7 +476,10 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
         {
           for ( int k = 0; k < params.nse; k++ )
           {
-            rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem];
+            rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem] 
+                                 - 1/params.dt
+                                  *( u_curr[k*params.columnL+i_elem+j*params.nelem]
+                                   - old_u[k*params.columnL+i_elem+j*params.nelem] );
           }
         }
         // invert the matrix
@@ -556,6 +563,7 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       }
       uvals << "\n";
 */
+} // sub_ite
     } // R-K loop
   } // time iteration
 
