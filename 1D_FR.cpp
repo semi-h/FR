@@ -92,6 +92,8 @@ int main()
   // 2N storage RK
   double *old_u;
   old_u = new double [(params.porder+1)*params.nelem*params.nvar];
+  double *u_curr;
+  u_curr = new double [(params.porder+1)*params.nelem*params.nvar];
   // implicit rk
   double *old_rhs;
   old_rhs = new double [(params.porder+1)*params.nelem*params.nvar];
@@ -154,11 +156,11 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob;
-                   - lagrInterL[k]*hL[j]/params.jacob
-                   - lagrInterR[k]*hR[j]/params.jacob;
-        //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
-        //else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
+        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
+                   - lagrInterL[k]*hL[j]/params.jacob;
+                   //- lagrInterR[k]*hR[j]/params.jacob;
+        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
+        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
         if ( j == k ) bigA[loc] += 1/params.dt;
       }
       // if only one solution point from left element is taken into account in the implicit matrix;
@@ -320,6 +322,8 @@ int main()
     for ( int i = 0; i < params.columnL*(params.porder+1); i++ ) old_u[i] = u[i];
     for ( int i = 0; i < params.nRK; i++ )
     {
+for ( int sub_ite = 0; sub_ite < 2; sub_ite++ )
+{
       //std::cout << "ite: " << ite << " ";
       //superFunc creates f, u_LR, and f_LR arrays
       superFunc(&params, u, f, u_LR, f_LR, lagrInterL, lagrInterR);
@@ -327,7 +331,7 @@ int main()
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
       computeFlux(&params, u_LR, f_LR);
-
+for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
       //update solution
       update(&params, u, f, f_LR, lagrDerivs, hL, hR);
 
@@ -370,7 +374,10 @@ int main()
       {
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          RHS[j*(params.porder+1)+k] = u[k*params.columnL+j];
+          RHS[j*(params.porder+1)+k] = u[k*params.columnL+j]
+                                     - 1/params.dt
+                                      *( u_curr[k*params.columnL+j]
+                                       - old_u[k*params.columnL+j] );
           //RHS[j*(params.porder+1)+k] = old_rhs[k*params.columnL+j];
         }
       }
@@ -449,7 +456,7 @@ int main()
         for ( int j = 0; j < (params.porder+1)*params.columnL; j++ ) u[j] = old_u[j];
         goto jumptowrite;
       }
-
+}//sub ite
     }//RK loop
   }//iteration
 
