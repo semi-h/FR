@@ -44,6 +44,8 @@ void update( essential *params, double *u, double *f, double *g, double *f_face,
              double *lagrDerivs, double *hL, double *hR );
 void computeFlux(essential* params, double *u_face, double *f_face);
 
+void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
+void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 
 
 int main()
@@ -73,10 +75,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.005;
+  params.dt     = 0.0100;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 2500;
-  params.nRK = 1; //1 || 4
+  params.maxIte = 100;
+  params.nRK = 3; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
 
@@ -118,11 +120,31 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   double *rhs;
   rhs = new double [params.nvar*params.nse];
 
+  // element wise interface jacobians;
+  double *F_I_LR, *G_I_BT;
+  F_I_LR = new double [params.nvar*params.nvar*2];
+  G_I_BT = new double [params.nvar*params.nvar*2];
+
   // 2N storage RK
   double *old_u;
   old_u = new double [params.nse*params.columnL];
   double *u_curr;
   u_curr = new double [params.nse*params.columnL];
+
+  //butcher table
+  double *butcher_a;
+  butcher_a = new double [params.nRK*params.nRK];
+  double *butcher_b, *butcher_c;
+  butcher_b = new double [params.nRK];
+  butcher_c = new double [params.nRK];
+  // dirk storage
+  double **ks;
+  ks = new double*[params.nRK];
+  for ( int i = 0; i < params.nRK; i++ )
+    ks[i] = new double [params.nse*params.columnL];
+  //ks[0] = new double [8];
+  //ks[0][2] = 33.4;
+  //std::cout << ks[0][2] << "\n";
 
   std::cout << "ndim: " << params.ndim << "\n";
   std::cout << "polynomial order is: " << params.porder << "\n";
@@ -152,11 +174,34 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   else if ( params.nRK == 4 )
   {
     alpha[0] = 0.25; alpha[1] = 1.0/3.0; alpha[2] = 0.5; alpha[3] = 1.0;
+    std::cout << "alpha: ";
+    for ( int i = 0; i < params.nRK; i++ ) std::cout << alpha[i] << " ";
+    std::cout << std::endl;
+  }
+  else if ( params.nRK == 3 )
+  {
+    double pi = 4.0*atan(1.0), param = 2.0*cos(pi/18.0)/sqrt(3);
+    std::cout << "alpha param: " << param << "\n";
+
+    butcher_a[0] = (1+param)*0.5; butcher_a[1] = 0;             butcher_a[2] = 0;
+    butcher_a[3] =-param*0.5;     butcher_a[4] = (1+param)*0.5; butcher_a[5] = 0;
+    butcher_a[6] = 1+param;       butcher_a[7] =-(1+2*param);   butcher_a[8] = (1+param)*0.5;
+
+    butcher_b[0] = 1/(6*param*param); butcher_b[1] = 1-1/(3*param*param); butcher_b[2] = 1/(6*param*param);
+
+    butcher_c[0] = (1+param)*0.5; butcher_c[1] = 0.5; butcher_c[2] = (1-param)*0.5;
+
+    std::cout << "butcher table;\n";
+    std::cout << "butcher a matrix;\n";
+    std::cout << butcher_a[0] << " " << butcher_a[1] << " " << butcher_a[2] << "\n";
+    std::cout << butcher_a[3] << " " << butcher_a[4] << " " << butcher_a[5] << "\n";
+    std::cout << butcher_a[6] << " " << butcher_a[7] << " " << butcher_a[8] << "\n";
+    std::cout << "butcher b values;\n";
+    std::cout << butcher_b[0] << " " << butcher_b[1] << " " << butcher_b[2] << "\n";
+    std::cout << "butcher c values;\n";
+    std::cout << butcher_c[0] << " " << butcher_c[1] << " " << butcher_c[2] << "\n";
   }
 
-  std::cout << "alpha: ";
-  for ( int i = 0; i < params.nRK; i++ ) std::cout << alpha[i] << " ";
-  std::cout << std::endl;
 
 
   // Initialization
@@ -265,7 +310,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         }
       }
     }
-    else
+    else // gaussian bump in 2D
     {
       double x, y, sigma=0.4, pi=3.141592653589793, mu=0;
       std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
@@ -300,7 +345,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   int *loc_u = new int[params.nvar];
   double *dummyU = new double[params.nvar*params.nse];
 
-  std::cout << "main loop begins\nite: ";
+  double ress;
+
+  std::cout << "main loop begins\nite: \n";
   //std::ofstream fface;
   //fface.open("f_face");
   //std::ofstream uvals;
@@ -310,14 +357,19 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "\n ite?: " << ite;
+    std::cout << " ite: " << ite << "\n";
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
-    for ( int i = 0; i < params.nRK; i++ )
+    for ( int i_RK = 0; i_RK < params.nRK; i_RK++ ) {
+      for ( int i = 0; i < params.nse*params.columnL; i++ ) ks[i_RK][i] = 0;
+    }
+    for ( int i_RK = 0; i_RK < params.nRK; i_RK++ )
     {
-
-for ( int sub_ite = 0; sub_ite < 2; sub_ite++ )
+ress = 10;
+for ( int sub_ite = 0; sub_ite < 30; sub_ite++ )
 {
-std::cout << "\n        sub_ite: " << sub_ite;
+if ( ress < 0.001 ) continue;
+ress = 0; // if residual small enough exit sub ite loop
+std::cout << "        sub_ite: " << sub_ite;
       //std::cout << "ite: " << ite << " ";
       //superFunc creates f, u_face, and f_face arrays
       superFunc( &params, u, f, g, u_face, f_face, //g_face, 
@@ -326,9 +378,13 @@ std::cout << "\n        sub_ite: " << sub_ite;
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
       computeFlux(&params, u_face, f_face);
-for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
       //update solution
       update(&params, u, f, g, f_face, lagrDerivs, hL, hR);
+
+      // assign neg div to k
+      //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
 
       // change here for the element wise implicit
 
@@ -341,72 +397,35 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
         {
           for ( int k = 0; k < params.porder+1; k++ )
           {
-            double u_vel, v_vel, p, H;
-            int i_block;
-            for ( int l = 0; l < params.nvar; l++ )
-              loc_u[l] = (j*(params.porder+1)+k)*params.columnL + l*params.nelem + i_elem;
-            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
-            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
-            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
-            //F jacob
-            i_block = k*params.nvar;
-            Fblock[i_block + 0] = 0;
-            Fblock[i_block + 1] = 1;
-            Fblock[i_block + 2] = 0;
-            Fblock[i_block + 3] = 0;
-            i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - u_vel*u_vel;
-            Fblock[i_block + 1] = (3-gammaVal)*u_vel;
-            Fblock[i_block + 2] = (1-gammaVal)*v_vel;
-            Fblock[i_block + 3] = (gammaVal-1);
-            i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] =-u_vel*v_vel;
-            Fblock[i_block + 1] = v_vel;
-            Fblock[i_block + 2] = u_vel;
-            Fblock[i_block + 3] = 0;
-            i_block += params.nvar*(params.porder+1);
-            Fblock[i_block + 0] =-u_vel*(gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
-            //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*u_vel;
-            Fblock[i_block + 1] = gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]] - (gammaVal-1)*0.5*(3*u_vel*u_vel+v_vel*v_vel);
-            //H + (1-gammaVal)*u_vel*u_vel;
-            Fblock[i_block + 2] = (1-gammaVal)*u_vel*v_vel;
-            Fblock[i_block + 3] = gammaVal*u_vel;
+            F_flux_jacob( &params, i_elem, Fblock, k*params.nvar, 
+                          params.nvar*(params.porder+1), old_u, j*(params.porder+1)+k );
 
-            for ( int l = 0; l < params.nvar; l++ )
-              loc_u[l] = (k*(params.porder+1)+j)*params.columnL + l*params.nelem + i_elem;
-            u_vel = old_u[loc_u[1]]/old_u[loc_u[0]];
-            v_vel = old_u[loc_u[2]]/old_u[loc_u[0]];
-            p = (gammaVal-1)*(old_u[loc_u[3]]-0.5*old_u[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
-            H = (p+old_u[loc_u[3]])/old_u[loc_u[0]];
-            //G jacob
-            i_block = k*params.nvar;
-            Gblock[i_block + 0] = 0;
-            Gblock[i_block + 1] = 0;
-            Gblock[i_block + 2] = 1;
-            Gblock[i_block + 3] = 0;
-            i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] =-u_vel*v_vel;
-            Gblock[i_block + 1] = v_vel;
-            Gblock[i_block + 2] = u_vel;
-            Gblock[i_block + 3] = 0;
-            i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - v_vel*v_vel;
-            Gblock[i_block + 1] = (1-gammaVal)*u_vel;
-            Gblock[i_block + 2] = (3-gammaVal)*v_vel;
-            Gblock[i_block + 3] = (gammaVal-1);
-            i_block += params.nvar*(params.porder+1);
-            Gblock[i_block + 0] =-v_vel*(gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]]-(gammaVal-1)*(u_vel*u_vel+v_vel*v_vel));
-            //((gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - H)*v_vel;
-            Gblock[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
-            Gblock[i_block + 2] = gammaVal*old_u[loc_u[3]]/old_u[loc_u[0]] - (gammaVal-1)*0.5*(u_vel*u_vel+3*v_vel*v_vel);
-            //H + (1-gammaVal)*v_vel*v_vel;
-            Gblock[i_block + 3] = gammaVal*v_vel;
+            G_flux_jacob( &params, i_elem, Gblock, k*params.nvar, 
+                          params.nvar*(params.porder+1), old_u, k*(params.porder+1)+j );
 
-            //for ( i_Fblock = 0; i_Fblock < params.nvar; i_Fblock++ )
-              //for ( j_Fblock = k*params.nvar; j_Fblock < (k+1)*params.nvar; j_Fblock++ )
-                //Fblock[i_Fblock*params.nvar*(params.porder+1)+j_Fblock] = 0;
           }
+
+          // Evaluate interface flux jacobians;
+          // store in F_I_LR G_I_BT
+          // F_L, F_R, G_B, G_T respectively;
+          // F_L;
+          int face_i;
+          face_i = (params.porder+1)*(params.porder+1)-1-j; // left
+          //F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
+          F_flux_jacob( &params, i_elem, F_I_LR, 0, params.nvar*2, u_face, face_i );
+          // F_R;
+          face_i = params.porder+1+j; // right
+          F_flux_jacob( &params, i_elem, F_I_LR, 4, params.nvar*2, u_face, face_i );
+          // G_B
+          face_i = j; // bottom
+          G_flux_jacob( &params, i_elem, G_I_BT, 0, params.nvar*2, u_face, face_i );
+          // G_T
+          face_i = 3*(params.porder+1)-1-j; // top
+          G_flux_jacob( &params, i_elem, G_I_BT, 4, params.nvar*2, u_face, face_i );
+
+          // interface flux jacobs are ready, now add these into local jacob
+
+
           for ( int k = 0; k < params.porder+1; k++ )
           {
             //multiply F/Gblock with correct coeffs and add it to the magicA
@@ -424,7 +443,9 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
                     += Fblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                       *( lagrDerivs[k*(params.porder+1)+l]
                        - lagrInterL[l]*hL[k]
-                       - lagrInterR[l]*hR[k] );
+                       - lagrInterR[l]*hR[k] )
+                     + F_I_LR[ii*params.nvar*2+0*params.nvar+jj]*lagrInterL[l]*hL[k]*0.5  //left
+                     + F_I_LR[ii*params.nvar*2+1*params.nvar+jj]*lagrInterR[l]*hR[k]*0.5; //right
                 }
               }
             }
@@ -441,16 +462,22 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
                     += Gblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                      *( lagrDerivs[k*(params.porder+1)+l]
                       - lagrInterL[l]*hL[k]
-                      - lagrInterR[l]*hR[k] );
+                      - lagrInterR[l]*hR[k] )
+                     + G_I_BT[ii*params.nvar*2+0*params.nvar+jj]*lagrInterL[l]*hL[k]*0.5  //left
+                     + G_I_BT[ii*params.nvar*2+1*params.nvar+jj]*lagrInterR[l]*hR[k]*0.5; //right
                 }
               }
             }
           }
         }
         // add the 1/dt to the diagonal
+        for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
+        {
+          magicA[j] *=-params.dt*butcher_a[i_RK*params.nRK+i_RK];
+        }
         for ( int j = 0; j < params.nvar*params.nse; j++ )
         {
-          magicA[j*params.nvar*params.nse+j] += 1/params.dt;
+          magicA[j*params.nvar*params.nse+j] += 1;///params.dt;
         }
 
 
@@ -476,10 +503,13 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
         {
           for ( int k = 0; k < params.nse; k++ )
           {
-            rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem] 
-                                 - 1/params.dt
-                                  *( u_curr[k*params.columnL+i_elem+j*params.nelem]
-                                   - old_u[k*params.columnL+i_elem+j*params.nelem] );
+            //rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem] 
+            //                     - 1/params.dt
+            //                      *( u_curr[k*params.columnL+i_elem+j*params.nelem]
+            //                       - old_u[k*params.columnL+i_elem+j*params.nelem] );
+            rhs[k*params.nvar+j] =-ks[i_RK][k*params.columnL+i_elem+j*params.nelem]
+                                 + u[k*params.columnL+i_elem+j*params.nelem];
+            ress += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
           }
         }
         // invert the matrix
@@ -500,18 +530,31 @@ for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
         {
           for ( int k = 0; k < params.nse; k++ )
           {
-            u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem] 
-                                                      + alpha[i]*rhs[k*params.nvar+j];
+            //u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem] 
+            //                                          + alpha[i_RK]*rhs[k*params.nvar+j];
+            ks[i_RK][k*params.columnL+i_elem+j*params.nelem] += rhs[k*params.nvar+j];
+
+            u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem];
+            for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
+            {
+              u[k*params.columnL+i_elem+j*params.nelem]
+                += params.dt*butcher_a[i_RK*params.nRK+l]
+                  *ks[l][k*params.columnL+i_elem+j*params.nelem];
+            }
+
           }
         }
 
       }//for each element local implicit update
 
+      ress = sqrt(ress);
+      std::cout << "   residual " << ress << "\n";
+
 /*
       //explicit update
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
-        u[j] = old_u[j] + alpha[i]*params.dt*u[j];
+        u[j] = old_u[j] + alpha[i_RK]*params.dt*u[j];
       }
 */
 
@@ -564,7 +607,36 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       uvals << "\n";
 */
 } // sub_ite
+
+/*
+      // update u after first stage;
+      if ( i_RK+1 /= params.nRK )
+      {
+        for ( int j = 0; j < params.nse*params.columnL; j++ )
+        {
+          u[j] = old_u[j];
+          for ( int k = 0; k < params.nRK; k++ )
+          {
+            u[j] += params.dt*butcher_c[k]*ks[k][j];
+          }
+        }
+      }
+*/
+
     } // R-K loop
+
+
+    // update solution here using all ks stages;
+    //explicit update
+    for ( int j = 0; j < params.nse*params.columnL; j++ )
+    {
+      u[j] = old_u[j];
+      for ( int k = 0; k < params.nRK; k++ )
+      {
+        u[j] += params.dt*butcher_b[k]*ks[k][j];
+      }
+    }
+
   } // time iteration
 
 
@@ -918,6 +990,91 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
   return;
 }
 
+void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u )
+{
+          // Evaluate interface flux jacobians;
+          // store in F_I_LR G_I_BT
+          // F_L, F_R, G_B, G_T respectively;
+          // F_L;
+          int *loc_u;
+          loc_u = new int [params->nvar];
+          double u_vel, v_vel, p, H;
+          int i_block;
+          for ( int l = 0; l < params->nvar; l++ )
+            loc_u[l] = i_u*params->columnL + l*params->nelem + i_elem;
+          u_vel = u_vals[loc_u[1]]/u_vals[loc_u[0]];
+          v_vel = u_vals[loc_u[2]]/u_vals[loc_u[0]];
+          p = (gammaVal-1)*(u_vals[loc_u[3]]-0.5*u_vals[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+          H = (p+u_vals[loc_u[3]])/u_vals[loc_u[0]];
+          //F jacob
+          i_block = i_start;
+          jacob[i_block + 0] = 0;
+          jacob[i_block + 1] = 1;
+          jacob[i_block + 2] = 0;
+          jacob[i_block + 3] = 0;
+          i_block += jCN;
+          jacob[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - u_vel*u_vel;
+          jacob[i_block + 1] = (3-gammaVal)*u_vel;
+          jacob[i_block + 2] = (1-gammaVal)*v_vel;
+          jacob[i_block + 3] = (gammaVal-1);
+          i_block += jCN;
+          jacob[i_block + 0] =-u_vel*v_vel;
+          jacob[i_block + 1] = v_vel;
+          jacob[i_block + 2] = u_vel;
+          jacob[i_block + 3] = 0;
+          i_block += jCN;
+          jacob[i_block + 0] =-u_vel*( gammaVal*u_vals[loc_u[3]]/u_vals[loc_u[0]]
+                                      - (gammaVal-1)*(u_vel*u_vel+v_vel*v_vel) );
+          jacob[i_block + 1] = gammaVal*u_vals[loc_u[3]]/u_vals[loc_u[0]]
+                              - (gammaVal-1)*0.5*(3*u_vel*u_vel+v_vel*v_vel);
+          jacob[i_block + 2] = (1-gammaVal)*u_vel*v_vel;
+          jacob[i_block + 3] = gammaVal*u_vel;
+
+  return;
+}
+
+void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u )
+{
+          // Evaluate interface flux jacobians;
+          // store in F_I_LR G_I_BT
+          // F_L, F_R, G_B, G_T respectively;
+          // F_L;
+          int *loc_u;
+          loc_u = new int [params->nvar];
+          double u_vel, v_vel, p, H;
+          int i_block;
+          for ( int l = 0; l < params->nvar; l++ )
+            loc_u[l] = i_u*params->columnL + l*params->nelem + i_elem;
+          u_vel = u_vals[loc_u[1]]/u_vals[loc_u[0]];
+          v_vel = u_vals[loc_u[2]]/u_vals[loc_u[0]];
+          p = (gammaVal-1)*(u_vals[loc_u[3]]-0.5*u_vals[loc_u[0]]*(u_vel*u_vel+v_vel+v_vel));
+          H = (p+u_vals[loc_u[3]])/u_vals[loc_u[0]];
+          //G jacob
+          i_block = i_start;
+          jacob[i_block + 0] = 0;
+          jacob[i_block + 1] = 0;
+          jacob[i_block + 2] = 1;
+          jacob[i_block + 3] = 0;
+          i_block += jCN;
+          jacob[i_block + 0] =-u_vel*v_vel;
+          jacob[i_block + 1] = v_vel;
+          jacob[i_block + 2] = u_vel;
+          jacob[i_block + 3] = 0;
+          i_block += jCN;
+          jacob[i_block + 0] = (gammaVal-1)*0.5*(u_vel*u_vel+v_vel*v_vel) - v_vel*v_vel;
+          jacob[i_block + 1] = (1-gammaVal)*u_vel;
+          jacob[i_block + 2] = (3-gammaVal)*v_vel;
+          jacob[i_block + 3] = (gammaVal-1);
+          i_block += jCN;
+          jacob[i_block + 0] =-v_vel*( gammaVal*u_vals[loc_u[3]]/u_vals[loc_u[0]]
+                                     - (gammaVal-1)*(u_vel*u_vel+v_vel*v_vel) );
+          jacob[i_block + 1] = (1-gammaVal)*u_vel*v_vel;
+          jacob[i_block + 2] = gammaVal*u_vals[loc_u[3]]/u_vals[loc_u[0]]
+                             - (gammaVal-1)*0.5*(3*v_vel*v_vel+u_vel*u_vel);
+          jacob[i_block + 3] = gammaVal*v_vel;
+
+  return;
+}
 
 
 void set_solnPoints(int p, double **soln_coords, double **weights)
