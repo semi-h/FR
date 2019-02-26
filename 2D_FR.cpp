@@ -1,4 +1,4 @@
-// 1D Flux Reconstruction Code - 22.11.2018
+// 2D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
 // git - master/2D
 
