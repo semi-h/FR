@@ -25,8 +25,8 @@
 
 
 struct essential {
-  double dt, jacob;
-  int nvar, porder, nelem, columnL, maxIte, nRK, nU;
+  double dt, jacob, tol;
+  int nvar, porder, nelem, columnL, maxIte, nRK, nU, sub_ite;
 } ;
 
 const double gammaVal=1.4;
@@ -56,15 +56,16 @@ int main()
   essential params;
 
   params.nvar   = 1;
-  params.porder = 3; // 0 || 1 || 2 || 3
-  params.dt     = 0.16;
+  params.porder = 3; // 0 || 1 || 2 || 3 || 4
+  params.dt     = 0.4;
   params.nelem  = 100;
-  params.maxIte = 12500;
-  params.nRK = 1; //1 || 4
+  params.maxIte = 5000;//719.4  4878 71429
+  params.nRK = 6; //RK, 1 || 4; DIRK, 3 || 6
   params.columnL = params.nvar*params.nelem;
   params.jacob  = L/params.nelem/2;
   params.nU = (params.porder+1)*params.nvar*params.nelem;
-
+  params.sub_ite = 100;
+  params.tol = 1e-8;
 
   std::cout << "polynomial order is set " << params.porder << std::endl;
 
@@ -98,6 +99,22 @@ int main()
   double *old_rhs;
   old_rhs = new double [(params.porder+1)*params.nelem*params.nvar];
 
+
+
+  //butcher table
+  double *butcher_a;
+  butcher_a = new double [params.nRK*params.nRK];
+  double *butcher_b, *butcher_c;
+  butcher_b = new double [params.nRK];
+  butcher_c = new double [params.nRK];
+  // dirk storage
+  double **ks;
+  ks = new double*[params.nRK];
+  for ( int i = 0; i < params.nRK; i++ )
+    ks[i] = new double [(params.porder+1)*params.columnL];
+
+
+
   // implicit matrix
   double *bigA;
   bigA = new double [params.nU*params.nU];
@@ -111,6 +128,85 @@ int main()
   double *RHS; // right hand side
   RHS = new double [params.nU];
   for ( int i = 0; i < params.nU; i++ ) RHS[i] = 0;
+
+
+  double *alpha;
+  alpha = new double [params.nRK];
+
+  if ( params.nRK == 1 )
+  {
+    alpha[0] = 1.0;
+  }
+  else if ( params.nRK == 4 )
+  {
+    alpha[0] = 0.25; alpha[1] = 1.0/3.0; alpha[2] = 0.5; alpha[3] = 1.0;
+    std::cout << "alpha: ";
+    for ( int i = 0; i < params.nRK; i++ ) std::cout << alpha[i] << " ";
+    std::cout << std::endl;
+    }
+  else if ( params.nRK == 3 )
+  {
+    double pi = 4.0*atan(1.0), param = 2.0*cos(pi/18.0)/sqrt(3);
+    std::cout << "alpha param: " << param << "\n";
+
+    butcher_a[0] = (1+param)*0.5; butcher_a[1] = 0;             butcher_a[2] = 0;
+    butcher_a[3] =-param*0.5;     butcher_a[4] = (1+param)*0.5; butcher_a[5] = 0;
+    butcher_a[6] = 1+param;       butcher_a[7] =-(1+2*param);   butcher_a[8] = (1+param)*0.5;
+
+    butcher_b[0] = 1/(6*param*param); butcher_b[1] = 1-1/(3*param*param); butcher_b[2] = 1/(6*param*param);
+
+    butcher_c[0] = (1+param)*0.5; butcher_c[1] = 0.5; butcher_c[2] = (1-param)*0.5;
+
+    std::cout << "butcher table;\n";
+    std::cout << "butcher a matrix;\n";
+    std::cout << butcher_a[0] << " " << butcher_a[1] << " " << butcher_a[2] << "\n";
+    std::cout << butcher_a[3] << " " << butcher_a[4] << " " << butcher_a[5] << "\n";
+    std::cout << butcher_a[6] << " " << butcher_a[7] << " " << butcher_a[8] << "\n";
+    std::cout << "butcher b values;\n";
+    std::cout << butcher_b[0] << " " << butcher_b[1] << " " << butcher_b[2] << "\n";
+    std::cout << "butcher c values;\n";
+    std::cout << butcher_c[0] << " " << butcher_c[1] << " " << butcher_c[2] << "\n";
+  }
+  else if ( params.nRK == 6 )
+  {
+    //1st row
+    butcher_a[0] = 0; butcher_a[1] = 0; butcher_a[2] = 0;
+      butcher_a[3] = 0; butcher_a[4] = 0; butcher_a[5] = 0;
+    //2nd row
+    butcher_a[6] = 0.25; butcher_a[7] = 0.25; butcher_a[8] = 0;
+      butcher_a[9] = 0; butcher_a[10] = 0; butcher_a[11] = 0;
+    //3rd row
+    butcher_a[12] = 8611.0/62500.0; butcher_a[13] =-1743.0/31250.0; butcher_a[14] = 0.25;
+      butcher_a[15] = 0; butcher_a[16] = 0; butcher_a[17] = 0;
+    //4th row
+    butcher_a[18] = 5012029.0/34652500.0; butcher_a[19] = -654441.0/2922500.0; butcher_a[20] = 174375.0/388108.0;
+      butcher_a[21] = 0.25; butcher_a[22] = 0; butcher_a[23] = 0;
+    //5th row
+    butcher_a[24] = 15267082809.0/155376265600.0; butcher_a[25] =-71443401.0/120774400.0; butcher_a[26] = 730878875.0/902184768.0;
+      butcher_a[27] = 2285395.0/8070912.0; butcher_a[28] = 0.25; butcher_a[29] = 0;
+    //6th row
+    butcher_a[30] = 82889.0/524892.0; butcher_a[31] = 0; butcher_a[32] = 15625.0/83664.0;
+      butcher_a[33] = 69875.0/102672.0; butcher_a[34] =-2260.0/8211.0; butcher_a[35] = 0.25;
+
+    butcher_b[0] = 82889.0/524892.0; butcher_b[1] = 0; butcher_b[2] = 15625.0/83664.0;
+      butcher_b[3] = 69875.0/102672.0; butcher_b[4] =-2260.0/8211.0; butcher_b[5] = 0.25;
+
+
+    std::cout << "butcher table;\n";
+    std::cout << "butcher a matrix;\n";
+    for ( int i = 0; i < params.nRK; i++ )
+    {
+      for ( int j = 0; j < params.nRK; j++ )
+      {
+        std::cout << butcher_a[i*params.nRK+j] << " ";
+      }
+      std::cout << "\n";
+    }
+    std::cout << "butcher b values;\n";
+    for ( int i = 0; i < params.nRK; i++ ) std::cout << butcher_b[i] << " ";
+    std::cout << "\n";
+  }
+
 
   double *A;
   A = new double [(params.porder+1)*(params.porder+1)];
@@ -156,12 +252,12 @@ int main()
       for ( int k = 0; k < params.porder+1; k++ )
       {
         loc = (i*(params.porder+1)+j)*params.nU+i*(params.porder+1)+k;
-        bigA[loc] += lagrDerivs[j*(params.porder+1)+k]/params.jacob
-                   - lagrInterL[k]*hL[j]/params.jacob;
-                   //- lagrInterR[k]*hR[j]/params.jacob;
-        if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
-        else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob;
-        if ( j == k ) bigA[loc] += 1/params.dt;
+        bigA[loc] += (lagrDerivs[j*(params.porder+1)+k]/params.jacob
+                   - lagrInterL[k]*hL[j]/params.jacob)*params.dt*butcher_a[params.nRK*params.nRK-1];
+                   //- lagrInterR[k]*hR[j]/params.jacob;//)*params.dt*butcher_a[params.nRK*params.nRK-1];
+        //if ( i == 0 ) bigA[loc+(params.columnL-1)*(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob*params.dt*butcher_a[params.nRK*params.nRK-1];
+        //else bigA[loc-(params.porder+1)] += lagrInterR[k]*hL[j]/params.jacob*params.dt*butcher_a[params.nRK*params.nRK-1];
+        if ( j == k ) bigA[loc] += 1;///params.dt;
       }
       // if only one solution point from left element is taken into account in the implicit matrix;
       //int k = params.porder+1-1;
@@ -236,24 +332,8 @@ int main()
   std::cout << "# of cycle: " << params.maxIte*params.dt/L << "\n";
   std::cout << "RK stage: " << params.nRK << std::endl;
 
-  double *alpha;
-  alpha = new double [params.nRK];
 
-  if ( params.nRK == 1 )
-  {
-    alpha[0] = 1.0;
-  }
-  else if ( params.nRK == 4 )
-  {
-    alpha[0] = 0.25; alpha[1] = 1.0/3.0; alpha[2] = 0.5; alpha[3] = 1.0;
-  }
 
-  std::cout << "alpha: ";
-  for ( int i = 0; i < params.nRK; i++ )
-  {
-    std::cout << alpha[i] << " ";
-  }
-  std::cout << std::endl;
 
 
   // Initialization
@@ -312,18 +392,54 @@ int main()
   }
   }
 
+
+  double CONSERVATION = 0;
+  for ( int j = 0; j < params.columnL; j++ )
+  {
+    for ( int k = 0; k < params.porder+1; k++)
+    {
+      CONSERVATION += u[k*params.columnL+j]*weights[k]*params.jacob;
+    }
+  }
+  std::cout << "conversation: " << CONSERVATION << "\n";
+
+  double ress;
+  double conservation;
   double eps = 0.000001;
   double *dummyU = new double[params.porder+1];
   std::cout << "main loop begins\nite";
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << "\rite: " << ite;
+    std::cout << "ite: " << ite << "\n";
     for ( int i = 0; i < params.columnL*(params.porder+1); i++ ) old_u[i] = u[i];
-    for ( int i = 0; i < params.nRK; i++ )
+    for ( int i_RK = 0; i_RK < params.nRK; i_RK++ ) {
+      for ( int i = 0; i < (params.porder+1)*params.columnL; i++ ) ks[i_RK][i] = 0;
+    }
+    for ( int i_RK = 0; i_RK < params.nRK; i_RK++ )
     {
-for ( int sub_ite = 0; sub_ite < 2; sub_ite++ )
+
+      // initial guess for intermediate negDiv, ks
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.porder+1; k++ )
+        {
+          u[k*params.columnL+j] = old_u[k*params.columnL+j];
+          for ( int l = 0; l < i_RK+1; l++ )
+          {
+            u[k*params.columnL+j] += params.dt*butcher_a[i_RK*params.nRK+l]
+                                    *ks[l][k*params.columnL+j];
+          }
+        }
+      }
+
+
+ress = 10;
+for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
+if ( ress < params.tol ) continue;
+ress = 0;
+std::cout << "        sub_ite: " << sub_ite;
       //std::cout << "ite: " << ite << " ";
       //superFunc creates f, u_LR, and f_LR arrays
       superFunc(&params, u, f, u_LR, f_LR, lagrInterL, lagrInterR);
@@ -331,18 +447,19 @@ for ( int sub_ite = 0; sub_ite < 2; sub_ite++ )
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_LR array to have f_I{L/R}-f_D{L/R} as entries
       computeFlux(&params, u_LR, f_LR);
-for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
+
+      for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
       //update solution
       update(&params, u, f, f_LR, lagrDerivs, hL, hR);
 
       // keep rhs as old
-      //if ( i == 0 ) {for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) old_rhs[j] = u[j];}
+      //if ( i_RK == 0 ) {for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) old_rhs[j] = u[j];}
 
 
       /*
       for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
       {
-        u[j] = old_u[j] + alpha[i]*params.dt*u[j];
+        u[j] = old_u[j] + alpha[i_RK]*params.dt*u[j];
       }
       */
 
@@ -350,7 +467,7 @@ for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
       /*
       for ( int j = 0; j < params.columnL; j++ )
       {
-        //u[j] = old_u[j] + alpha[i]*params.dt*u[j];
+        //u[j] = old_u[j] + alpha[i_RK]*params.dt*u[j];
         // A*u;
         double *dummy = new double[params.porder+1];
         for ( int ii = 0; ii < params.porder+1; ii++ ) dummy[ii] = 0;
@@ -363,7 +480,7 @@ for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
         }
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          u[k*params.columnL+j] = old_u[k*params.columnL+j] + alpha[i]*dummy[k];
+          u[k*params.columnL+j] = old_u[k*params.columnL+j] + alpha[i_RK]*dummy[k];
         }
       }
       */
@@ -374,30 +491,44 @@ for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
       {
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          RHS[j*(params.porder+1)+k] = u[k*params.columnL+j]
-                                     - 1/params.dt
-                                      *( u_curr[k*params.columnL+j]
-                                       - old_u[k*params.columnL+j] );
+          //RHS[j*(params.porder+1)+k] = u[k*params.columnL+j];
+                                     //- 1/params.dt
+                                     // *( u_curr[k*params.columnL+j]
+                                     //  - old_u[k*params.columnL+j] );
           //RHS[j*(params.porder+1)+k] = old_rhs[k*params.columnL+j];
+
+          //DIRK;
+          RHS[j*(params.porder+1)+k] =-ks[i_RK][k*params.columnL+j] + u[k*params.columnL+j];
+
+          ress += RHS[j*(params.porder+1)+k]*RHS[j*(params.porder+1)+k];
         }
       }
       int loc;
-      for ( int ii = 0; ii < params.columnL; ii++ )
+      for ( int j = 0; j < params.columnL; j++ )
       {
-        for ( int j = 0; j < params.porder+1; j++ ) dummyU[j] = 0;
-        for ( int j = 0; j < params.porder+1; j++ )
+        for ( int k = 0; k < params.porder+1; k++ ) dummyU[k] = 0;
+        for ( int k = 0; k < params.porder+1; k++ )
         {
-          for ( int k = 0; k < params.nU; k++ )
+          for ( int l = 0; l < params.nU; l++ )
           {
-            //loc = (ii*(params.porder+1)+j)*params.nU+ii*(params.porder+1)+k;
-            loc = (ii*(params.porder+1)+j)*params.nU+k;
-            dummyU[j] += bigA[loc]*RHS[k];
+            loc = (j*(params.porder+1)+k)*params.nU+l;
+            dummyU[k] += bigA[loc]*RHS[l];
           }
         }
         for ( int k = 0; k < params.porder+1; k++ )
         {
-          //commented out for numerical jacob evaluation
-          u[k*params.columnL+ii] = old_u[k*params.columnL+ii] + alpha[i]*dummyU[k];
+          //u[k*params.columnL+j] = old_u[k*params.columnL+j] + alpha[i_RK]*dummyU[k];
+
+          //DIRK;  // if i_RK == 0; it is the first explicit iteration, the matrix should be identity
+                   // which makes the solution equal to rhs;
+          if ( i_RK == 0 ) ks[i_RK][k*params.columnL+j] = RHS[j*(params.porder+1)+k];
+          else ks[i_RK][k*params.columnL+j] += dummyU[k];
+          u[k*params.columnL+j] = old_u[k*params.columnL+j];
+          for ( int l = 0; l < i_RK+1; l++ )
+          {
+            u[k*params.columnL+j] += params.dt*butcher_a[i_RK*params.nRK+l]
+                                    *ks[l][k*params.columnL+j];
+          }
         }
       }
       
@@ -444,9 +575,21 @@ for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
       }
       for ( int j = 0; j < params.columnL*(params.porder+1); j++ )
       {
-        u[j] = old_u[j] + alpha[i]*u[j];
+        u[j] = old_u[j] + alpha[i_RK]*u[j];
       }
       */
+
+      conservation = 0;
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.porder+1; k++)
+        {
+          conservation += u[k*params.columnL+j]*weights[k]*params.jacob;
+        }
+      }
+
+      ress = sqrt(ress);
+      std::cout << "   residual " << ress << "    conservation:" << conservation-CONSERVATION << "\n";
 
       double errr=0.0;
       for ( int j = 0; j < (params.porder+1)*params.columnL; j++ ) errr += u[j];
@@ -456,8 +599,41 @@ for ( int j = 0; j < params.columnL*(params.porder+1); j++ ) u_curr[j] = u[j];
         for ( int j = 0; j < (params.porder+1)*params.columnL; j++ ) u[j] = old_u[j];
         goto jumptowrite;
       }
+
 }//sub ite
+
+/*
+//guess the next r
+      if ( i_RK /= params.nRK ) {
+        for ( int j = 0; j < params.columnL; j++ )
+        {
+          for ( int k = 0; k < params.porder+1; k++ )
+          {
+            u[k*params.columnL+j] = old_u[k*params.columnL+j];
+            for ( int l = 0; l < i_RK+1; l++ )
+            {
+              u[k*params.columnL+j] += params.dt*butcher_a[(i_RK+1)*params.nRK+l]
+                                      *ks[l][k*params.columnL+j];
+            }
+          }
+        }
+      }
+*/
     }//RK loop
+
+
+    // DIRK update solution here using all ks stages;
+    //explicit update
+    for ( int j = 0; j < (params.porder+1)*params.columnL; j++ )
+    {
+      u[j] = old_u[j];
+      for ( int k = 0; k < params.nRK; k++ )
+      {
+        u[j] += params.dt*butcher_b[k]*ks[k][j];
+      }
+    }
+
+
   }//iteration
 
   jumptowrite: std::cout << "\n";
