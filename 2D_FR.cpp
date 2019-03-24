@@ -35,25 +35,27 @@ void set_solnPoints(int p, double **soln_coords, double **weights);
 void set_lagrangeDerivs(int p, double *soln_coords, double **derivs);
 void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, double **lagrInterR);
 void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
-void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI);
+void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat);
+void calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A);
 
 void superFunc( essential* params, double *u, double *f, double *g, 
                 double *u_face, double *f_face, //double *g_face, 
                 double *lagrInterL, double *lagrInterR );
 void update( essential *params, double *u, double *f, double *g, double *f_face, 
              double *lagrDerivs, double *hL, double *hR );
-void computeFlux(essential* params, double *u_face, double *f_face);
+void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face);
 
 void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
-
+void correct_Flux( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u, double n_x, double n_y );
 
 int main()
 {
   double ql[4] = {1, 1.5, 0.5, 2.5};
   double qr[4] = {1, 0.5, 1.5, 2.5};
+  double q_hat[4] = {0};
   double fluxx[4];
-  roe_flux(ql, qr, 1.0, 0.0, fluxx);
+  roe_flux(ql, qr, 1.0, 0.0, fluxx, q_hat);
 std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] << "\n";
   double L = 10;
   essential params;
@@ -61,10 +63,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  L_x = 200;
-  L_y = 200;
-  params.nelem_x = 100;
-  params.nelem_y = 100;
+  L_x = 100;
+  L_y = 100;
+  params.nelem_x = 50;
+  params.nelem_y = 50;
   params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
@@ -75,13 +77,13 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.04;
+  params.dt     = 1;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 4000;
+  params.maxIte = 100;//3125
   params.nRK = 6; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
-  params.sub_ite = 10;
+  params.sub_ite = 100;
   params.tol = 1e-8;
 
   //create mesh!
@@ -111,6 +113,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   u_face = new double [params.nfe*params.columnL];
   f_face = new double [params.nfe*params.columnL];
   //g_face = new double [params.nfe*params.columnL];
+
+  double *u_hat_face;
+  u_hat_face = new double [params.nfe*params.columnL];
 
   // element wise implicit matrix
   double *magicA;
@@ -172,6 +177,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   if ( params.nRK == 1 )
   {
     alpha[0] = 1.0;
+
+    butcher_a[0] = 1;
+    butcher_b[0] = 1;
   }
   else if ( params.nRK == 4 )
   {
@@ -200,7 +208,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   else if ( params.nRK == 6 )
   {
     //1st row
-    butcher_a[0] = 0; butcher_a[1] = 0; butcher_a[2] = 0;
+    butcher_a[0] = 0.25; butcher_a[1] = 0; butcher_a[2] = 0;
       butcher_a[3] = 0; butcher_a[4] = 0; butcher_a[5] = 0;
     //2nd row
     butcher_a[6] = 0.25; butcher_a[7] = 0.25; butcher_a[8] = 0;
@@ -411,7 +419,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     }
     for ( int i_RK = 0; i_RK < params.nRK; i_RK++ )
     {
-
+/*
       // DIRK
       // initial guess for intermediate negDiv, ks
       for ( int j = 0; j < params.nse*params.columnL; j++ )
@@ -422,7 +430,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
           u[j] += params.dt*butcher_a[i_RK*params.nRK+k]*ks[k][j];
         }
       }
-
+*/
 ress = 10;
 for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
@@ -436,7 +444,7 @@ std::cout << "        sub_ite: " << sub_ite;
 
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
-      computeFlux(&params, u_face, f_face);
+      computeFlux(&params, u_face, f_face, u_hat_face);
 
       for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
       //update solution
@@ -466,23 +474,29 @@ std::cout << "        sub_ite: " << sub_ite;
           }
 
 
+          //calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A)
+
           // Evaluate interface flux jacobians;
           // store in F_I_LR G_I_BT
+          //F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
           // F_L, F_R, G_B, G_T respectively;
           // F_L;
           int face_i;
           face_i = (params.porder+1)*(params.porder+1)-1-j; // left
-          //F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
           F_flux_jacob( &params, i_elem, F_I_LR, 0, params.nvar*2, u_face, face_i );
+          correct_Flux( &params, i_elem, F_I_LR, 0, params.nvar*2, u_hat_face, face_i, 1, 0 );
           // F_R;
           face_i = params.porder+1+j; // right
           F_flux_jacob( &params, i_elem, F_I_LR, 4, params.nvar*2, u_face, face_i );
+          correct_Flux( &params, i_elem, F_I_LR, 4, params.nvar*2, u_hat_face, face_i, 1, 0 );
           // G_B
           face_i = j; // bottom
           G_flux_jacob( &params, i_elem, G_I_BT, 0, params.nvar*2, u_face, face_i );
+          correct_Flux( &params, i_elem, G_I_BT, 0, params.nvar*2, u_hat_face, face_i, 0, 1 );
           // G_T
           face_i = 3*(params.porder+1)-1-j; // top
           G_flux_jacob( &params, i_elem, G_I_BT, 4, params.nvar*2, u_face, face_i );
+          correct_Flux( &params, i_elem, G_I_BT, 4, params.nvar*2, u_hat_face, face_i, 0, 1 );
 
           // interface flux jacobs are ready, now add these into local jacob
 
@@ -504,7 +518,7 @@ std::cout << "        sub_ite: " << sub_ite;
                     += Fblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                       *( lagrDerivs[k*(params.porder+1)+l]
                        - lagrInterL[l]*hL[k]
-                       - lagrInterR[l]*hR[k] );
+                       - lagrInterR[l]*hR[k] )
                      + F_I_LR[ii*params.nvar*2+0*params.nvar+jj]*lagrInterL[l]*hL[k]*0.5  //left
                      + F_I_LR[ii*params.nvar*2+1*params.nvar+jj]*lagrInterR[l]*hR[k]*0.5; //right
                 }
@@ -523,7 +537,7 @@ std::cout << "        sub_ite: " << sub_ite;
                     += Gblock[ii*params.nvar*(params.porder+1)+l*params.nvar+jj]
                      *( lagrDerivs[k*(params.porder+1)+l]
                       - lagrInterL[l]*hL[k]
-                      - lagrInterR[l]*hR[k] );
+                      - lagrInterR[l]*hR[k] )
                      + G_I_BT[ii*params.nvar*2+0*params.nvar+jj]*lagrInterL[l]*hL[k]*0.5  //left
                      + G_I_BT[ii*params.nvar*2+1*params.nvar+jj]*lagrInterR[l]*hR[k]*0.5; //right
                 }
@@ -531,13 +545,15 @@ std::cout << "        sub_ite: " << sub_ite;
             }
           }
         }
-/*
+///////
+
         // add the 1/dt to the diagonal
         for ( int j = 0; j < params.nvar*params.nse; j++ )
         {
-          magicA[j*params.nvar*params.nse+j] += 1.0/params.dt;
+          //magicA[j*params.nvar*params.nse+j] += 1.0/params.dt;
         }
-*/
+
+////////
         // DIRK
         for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
         {
@@ -550,8 +566,8 @@ std::cout << "        sub_ite: " << sub_ite;
         }
 
 
+////////
 /*
-if ( i_RK != 0 ) {
         // TEMP- write magicA into file
         fmagicA << i_elem << "\n";
         for ( int j = 0; j < params.nse*params.nvar*params.nse*params.nvar; j++ )
@@ -564,9 +580,9 @@ if ( i_RK != 0 ) {
           if ( (j+1)%(params.nse*params.nvar*params.nvar) == 0 ) fmagicA << "\n";
           //fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
         }
-        fmagicA << "\n";
-}
+        fmagicA << "\n\n";
 */
+/////////
 
         // rhs; u is assigned as rhs temporarily after update func call 
         for ( int j = 0; j < params.nvar; j++ )
@@ -581,6 +597,9 @@ if ( i_RK != 0 ) {
             //DIRK;
             rhs[k*params.nvar+j] =-ks[i_RK][k*params.columnL+i_elem+j*params.nelem]
                                  + u[k*params.columnL+i_elem+j*params.nelem];
+                                 //+ 1/params.dt
+                                 // *( u_curr[k*params.columnL+i_elem+j*params.nelem]
+                                 //  - old_u[k*params.columnL+i_elem+j*params.nelem] );
 
             if ( j == 0 ) ress += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
           }
@@ -625,6 +644,7 @@ if ( i_RK != 0 ) {
 
       }//for each element local implicit update
 
+
 /*
       //explicit update
       for ( int j = 0; j < params.nse*params.columnL; j++ )
@@ -659,17 +679,17 @@ std::cout << "\n";
 std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*params.nelem+0];
 
       double eps = 0.000001;
-      old_u[0*params.columnL+0*params.nelem+1] += eps;
+      old_u[0*params.columnL+0*params.nelem+0] += eps;
       superFunc(&params, old_u, f, g, u_face, f_face, lagrInterL, lagrInterR);
-      computeFlux(&params, u_face, f_face);
+      computeFlux(&params, u_face, f_face, u_hat_face);
       update(&params, old_u, f, g, f_face, lagrDerivs, hL, hR);
       std::cout << "\nJACOBIAN\n";
       for ( int j = 0; j < params.nse; j++ )
       {
         for ( int k = 0; k < params.nvar; k++ )
         {
-          std::cout << ( old_u[j*params.columnL+k*params.nelem+1]
-                       - u[j*params.columnL+k*params.nelem+1] )/eps << "\n";
+          std::cout << std::scientific << (-old_u[j*params.columnL+k*params.nelem+0]
+                       + u[j*params.columnL+k*params.nelem+0] )/eps << "\n";
         }
         std::cout << "\n";
       }
@@ -850,9 +870,9 @@ void superFunc( essential* params, double *u, double *f, double *g,
         }
         */
       }
-    }
-    for ( int j = 0; j < params->porder+1; j++ )
-    {
+    //}
+    //for ( int j = 0; j < params->porder+1; j++ )
+    //{
       for ( int k = 0; k < params->nvar; k++ )
       {
         indx_L = (4*(params->porder+1)-1-j)*params->columnL+loc_q[k];//i_elem;
@@ -880,7 +900,7 @@ void superFunc( essential* params, double *u, double *f, double *g,
   return;
 }
 
-void computeFlux(essential* params, double *u_face, double *f_face)
+void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face)
 {
 
   //int loc_q[nvar];
@@ -889,6 +909,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
   double *u_L = new double[params->nvar];
   double *u_R = new double[params->nvar];
   double *f_I = new double[params->nvar];
+  double *u_hat = new double[params->nvar];
 
   int *pairL = new int[params->porder+1];
   int *pairR = new int[params->porder+1];
@@ -918,7 +939,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
           //f_I[j] = u_L[j];//linear advection
         }
-        roe_flux(u_L, u_R, 1.0, 0.0, f_I);
+        roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
         //overwrite f_face
         for ( int j = 0; j < params->nvar; j++ )
         {
@@ -926,6 +947,8 @@ void computeFlux(essential* params, double *u_face, double *f_face)
           indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
           f_face[indx_L] = f_I[j] - f_face[indx_L];
           f_face[indx_R] = f_I[j] - f_face[indx_R];
+          u_hat_face[indx_L] = u_hat[j];
+          u_hat_face[indx_R] =-u_hat[j];
         }
       }
       // bottom and top
@@ -943,7 +966,7 @@ void computeFlux(essential* params, double *u_face, double *f_face)
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
           //f_I[j] = u_L[j];//linear advection
         }
-        roe_flux(u_L, u_R, 0.0, 1.0, f_I);
+        roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
         //overwrite f_face
         for ( int j = 0; j < params->nvar; j++ )
         {
@@ -951,6 +974,8 @@ void computeFlux(essential* params, double *u_face, double *f_face)
           indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
           f_face[indx_L] = f_I[j] - f_face[indx_L];
           f_face[indx_R] = f_I[j] - f_face[indx_R];
+          u_hat_face[indx_L] = u_hat[j];
+          u_hat_face[indx_R] =-u_hat[j];
         }
       }
     }
@@ -1002,7 +1027,7 @@ void update( essential *params, double *u, double *f, double *g, double *f_face,
 }
 
 
-void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
+void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat)
 {
 
   double rho_L, u_L, v_L, E_L, p_L, c_L, H_L;
@@ -1023,7 +1048,7 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
   c_R = sqrt(gammaVal*p_R/rho_R);
   H_R = (p_R+E_R)/rho_R;
 
-  double rsl, rsr, rho_hat, u_hat, v_hat, H_hat, c_hat;//, E_hat;
+  double rsl, rsr, rho_hat, u_hat, v_hat, H_hat, c_hat, E_hat, p_hat;
   rsl = sqrt(rho_L);
   rsr = sqrt(rho_R);
   rho_hat = rsl*rsr;
@@ -1031,8 +1056,13 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
   v_hat = (rsl*v_L+rsr*v_R)/(rsl+rsr);
   H_hat = (rsl*H_L+rsr*H_R)/(rsl+rsr);
   c_hat = sqrt((gammaVal-1)*(H_hat-0.5*(u_hat*u_hat+v_hat*v_hat)));
-  //p_hat = rho_hat*c_hat*c_hat/gammaVal;
-  //E_hat = rho_hat*H_hat-p_hat;
+  p_hat = rho_hat*c_hat*c_hat/gammaVal;
+  E_hat = rho_hat*H_hat-p_hat;
+
+  q_hat[0] = rho_hat;
+  q_hat[1] = rho_hat*u_hat;
+  q_hat[2] = rho_hat*v_hat;
+  q_hat[3] = E_hat;
 
   double lambda[4] = { u_hat*n_x+v_hat*n_y-c_hat,
                        u_hat*n_x+v_hat*n_y,
@@ -1048,6 +1078,7 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
                       u_R*n_x+v_R*n_y,
                       u_R*n_x+v_R*n_y+c_R,
                       u_R*n_x+v_R*n_y };
+
   double eps = 0.01;
   for ( int i = 0; i < 4; i++ ) eps = std::max(std::abs(lam_R[i]-lam_L[i]),eps);
   for ( int i = 0; i < 4; i++ ) if ( std::abs(lambda[i]) <= 2*eps ) lambda[i] = lambda[i]*lambda[i]/(4*eps)+eps;
@@ -1084,12 +1115,142 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI)
   flux_R[1] = (q_R[1]*n_x + q_R[2]*n_y)*q_R[1]/q_R[0] + p_R*n_x;
   flux_R[2] = (q_R[1]*n_x + q_R[2]*n_y)*q_R[2]/q_R[0] + p_R*n_y;
   flux_R[3] = (q_R[1]*n_x + q_R[2]*n_y)*H_R;
-  for ( int i = 0; i < 4; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - diss[i]);
-  //fluxI[1] = 0.5*(flux_L[1] + flux_R[1] - diss[1]);
-  //fluxI[2] = 0.5*(flux_L[2] + flux_R[2] - diss[2]);
+
+  //for ( int i = 0; i < 4; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - diss[i]);
+
+  //switch to rusanov
+  double L_max = std::max(std::abs(lam_L[0]),std::abs(lam_L[2]));
+  double R_max = std::max(std::abs(lam_R[0]),std::abs(lam_R[2]));
+  double rus_eig = std::max(L_max,R_max);
+  for ( int i = 0; i < 4; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - rus_eig*(q_R[i]-q_L[i]));
+
+  q_hat[0] = rus_eig;
+  q_hat[1] = rus_eig;
+  q_hat[2] = rus_eig;
+  q_hat[3] = rus_eig;
 
   return;
 }
+
+
+void calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A)
+{
+
+  double r, u, v, e, ke, p, c;
+  r = q_hat[0];
+  u = q_hat[1]/q_hat[0];
+  v = q_hat[2]/q_hat[0];
+  e = q_hat[3];
+  ke = 0.5*(u*u+v*v);
+  p = (gammaVal-1)*(e-r*ke);
+  c = sqrt(gammaVal*p/r);
+
+  double un, h;
+  un = n_x*u + n_y*v;
+  h = (e+p)/r;
+
+  double lambda[4];
+  lambda[0] = un-c;
+  lambda[1] = un;
+  lambda[2] = un+c;
+  lambda[3] = un;
+
+  for ( int i = 0; i < 4; i++ ) lambda[i] = std::abs(lambda[i]);
+  double eps = 0.01;
+  for ( int i = 0; i < 4; i++ ) if ( std::abs(lambda[i]) <= 2*eps ) lambda[i] = lambda[i]*lambda[i]/(4*eps)+eps;
+
+  double rt[4][4], lt[4][4];
+
+  rt[0][0] = 1; rt[0][1] = 1; rt[0][2] = 1; rt[0][3] = 0;
+  rt[1][0] = u-c*n_x; rt[1][1] = u; rt[1][2] = u+c*n_x; rt[1][3] = n_y;
+  rt[2][0] = v-c*n_y; rt[2][1] = v; rt[2][2] = v+c*n_y; rt[1][3] =-n_x;
+  rt[3][0] = h-un*c; rt[3][1] = ke; rt[3][2] = h+un*c; rt[3][3] = u*n_y-v*n_x;
+
+  for ( int i = 0; i < 4; i++ )
+  {
+    for ( int j = 0; j < 4; j++ )
+    {
+      rt[i][j] *= lambda[i];
+    }
+  }
+
+  double invc2 = 1/(c*c);
+  lt[0][0]= (ke*(gammaVal-1)+c*un)*0.5*invc2;
+  lt[0][1]= (-u*(gammaVal-1)-c*n_x)*0.5*invc2;
+  lt[0][2]= (-v*(gammaVal-1)-c*n_y)*0.5*invc2;
+  lt[0][3]= (gammaVal-1)*0.5*invc2;
+  lt[1][0]= 1 -(gammaVal-1)*ke*invc2;
+  lt[1][1]= (gammaVal-1)*u*invc2;
+  lt[1][2]= (gammaVal-1)*v*invc2;
+  lt[1][3]=-(gammaVal-1)*invc2;
+  lt[2][0]= (ke*(gammaVal-1)-c*un)*0.5*invc2;
+  lt[2][1]= (-u*(gammaVal-1)+c*n_x)*0.5*invc2;
+  lt[2][2]= (-v*(gammaVal-1)+c*n_y)*0.5*invc2;
+  lt[2][3]= (gammaVal-1)*0.5*invc2;
+  lt[3][0]= v*n_x-u*n_y;
+  lt[3][1]= n_y;
+  lt[3][2]=-n_x;
+  lt[3][3]= 0;
+
+  //matrix_A[0-15]
+  for ( int i = 0; i < 4; i++ )
+  {
+    for ( int j = 0; j < 4; j++ )
+    {
+      matrix_A[i*4+j] = 0;
+      for ( int k = 0; k < 4; k++ )
+      {
+        matrix_A[i*4+j] += lt[i][k]*rt[k][j];
+      }
+    }
+  }
+
+  return;
+}
+
+
+void correct_Flux( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_hat_face, int i_u, double n_x, double n_y )
+{
+
+  int *loc_u;
+  loc_u = new int [params->nvar];
+  double u_hat[4];
+
+  for ( int i = 0; i < params->nvar; i++ )
+    loc_u[i] = i_u*params->columnL + i*params->nelem + i_elem;
+  for ( int i = 0; i < params->nvar; i++ )
+  {
+    u_hat[i] = u_hat_face[loc_u[i]];
+  }
+/*
+  double *matrix_A = new double [params->nvar*params->nvar];
+
+  //calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A)
+  calc_matrix_A(u_hat, n_x, n_y, matrix_A);
+
+  // edit jacob here
+  for ( int i = 0; i < params->nvar; i++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ )
+    {
+      jacob[i_start + i*jCN + j] += matrix_A[i*params->nvar+j];
+      //std::cout << matrix_A[i*params->nvar+j] << " ";
+    }
+  }
+*/
+
+  //for rusanov
+  for ( int i = 0; i < params->nvar; i++ )
+  {
+    jacob[i_start + i*jCN + i] += u_hat[i];
+  }
+
+  // trash matix_A
+  //delete[] matrix_A;
+  delete[] loc_u;
+  return;
+}
+
 
 void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u )
 {
