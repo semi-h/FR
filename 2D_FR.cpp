@@ -1,6 +1,6 @@
 // 2D Flux Reconstruction Code - 22.11.2018
 // Semih Akkurt
-// git - master/2D
+// git - master/viscous
 
 //g++ -O2 -o run_FR 1D_FR.cpp -I/home/semih/lapack-3.8.0/LAPACKE/include -I/home/semih/lapack-3.8.0/CBLAS/include -L/home/semih/lapack-3.8.0 -llapacke -llapack -lcblas -lrefblas -lgfortran
 
@@ -25,7 +25,7 @@
 #include <cblas.h>
 
 struct essential {
-  double dt, jacob, j_x, j_y, ndim, tol;
+  double dt, jacob, j_x, j_y, mu, Pr, beta, tau, ndim, tol;
   int nvar, porder, nnode, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite;
 } ;
 
@@ -43,11 +43,37 @@ void superFunc( essential* params, double *u, double *f, double *g,
                 double *lagrInterL, double *lagrInterR );
 void update( essential *params, double *u, double *f, double *g, double *f_face, 
              double *lagrDerivs, double *hL, double *hR );
-void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face);
+void computeFlux(essential* params, double *u_face, double *f_face, double *fv_face, double *u_hat_face);
 
 void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 void correct_Flux( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u, double n_x, double n_y );
+
+
+void get_q(essential *params, double *q_x, double *q_y, double *u, double *u_face, double *lagrDerivs, double *hL, double *hR);
+void viscFlux( essential *params, double *u, double *q_x, double *q_y, double *fv, double *gv, double *fv_face,
+               double *lagrInterL, double *lagrInterR );
+void nodeViscFlux(double *U_vals, double *pd_U_x, double *pd_U_y, double mu, double Pr, double *fv_node, double *gv_node);
+void mergeFlux(essential *params, double *f, double *g, double *f_face, double *fv, double *gv, double *fv_face);
+
+
+
+// NEW SET OF FUNCTIONS COMPUTABLE WITH NAVIER-STOKES;
+
+void deriveGiven( essential *params, 
+                  double *pd_X_ksi, double *pd_Y_eta, double *X, double *Y, double *fixed_f,
+                  double *lagrDerivs, double *hL, double *hR );
+
+void extrapToFace( essential *params,
+                   double *X, double *Y, double *face,
+                   double *lagrInterL, double *lagrInterR );
+void getInterFlux( essential* params,
+                   double *f_face, double *u_face, double *q_x_face, double *q_y_face, double *u_hat_face );
+void getFlux( essential* params, 
+              double *u, double *q_x, double *q_y, double *f, double *g );
+void getCommonU(essential *params, double *u_face);
+
+
 
 int main()
 {
@@ -71,6 +97,11 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
   params.jacob = params.j_x*params.j_y;
+
+  params.beta = 0.5;
+  params.tau = 0.1;
+  params.mu = 0;
+  params.Pr = 0.72;
 
   params.ndim   = 2;
   params.nvar   = 4;
@@ -113,6 +144,16 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   u_face = new double [params.nfe*params.columnL];
   f_face = new double [params.nfe*params.columnL];
   //g_face = new double [params.nfe*params.columnL];
+  //visc arrays;
+  double *q_x, *q_y, *fv, *gv, *fv_face, *q_x_face, *q_y_face;//, *gv_face;
+  q_x = new double [params.nse*params.columnL];
+  q_y = new double [params.nse*params.columnL];
+  fv = new double [params.nse*params.columnL];
+  gv = new double [params.nse*params.columnL];
+  fv_face = new double [params.nfe*params.columnL];
+  //gv_face = new double [params.nfe*params.columnL];
+  q_x_face = new double [params.nfe*params.columnL];
+  q_y_face = new double [params.nfe*params.columnL];
 
   double *u_hat_face;
   u_hat_face = new double [params.nfe*params.columnL];
@@ -438,17 +479,67 @@ if ( ress < params.tol ) continue;
 ress = 0; // if residual small enough exit sub ite loop
 std::cout << "        sub_ite: " << sub_ite;
       //std::cout << "ite: " << ite << " ";
+/*
       //superFunc creates f, u_face, and f_face arrays
       superFunc( &params, u, f, g, u_face, f_face, //g_face, 
                  lagrInterL, lagrInterR );
 
       //call flux function for each colocated uL uR pair of 2 neighbour elements
       // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
-      computeFlux(&params, u_face, f_face, u_hat_face);
+      computeFlux(&params, u_face, f_face, fv_face, u_hat_face);
+
+      // if visc;
+      // use update to get q(the derivative of the conservative variables
+      //update(&params, q_x, u, u, u_face, lagrDerivs, hL, hR);
+      get_q(&params, q_x, q_y, u, u_face, lagrDerivs, hL, hR);
+
+      // get visc flux using the q and u values;
+      // a func can get both visc flux at the solution points 
+      // and the interpolation of it at the cell faces
+      viscFlux(&params, u, q_x, q_y, fv, gv, fv_face, lagrInterL, lagrInterR);
+      mergeFlux(&params, f, g, f_face, fv, gv, fv_face);
+
 
       for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
       //update solution
       update(&params, u, f, g, f_face, lagrDerivs, hL, hR);
+*/
+
+/*
+void deriveGiven( essential *params, 
+                  double *pd_X_ksi, double *pd_Y_eta, double *X, double *Y, double *fixed_f,
+                  double *lagrDerivs, double *hL, double *hR );
+
+void extrapToFace( essential *params,
+                   double *X, double *Y, double *face,
+                   double *lagrInterL, double *lagrInterR );
+void getInterFlux( essential* params,
+                   double *f_face, double *u_face, double *q_x_face, double *q_y_face, double *u_hat_face );
+void getFlux( essential* params, 
+              double *u, double *q_x, double *q_y, double *f, double *g );
+void getCommonU(essential *params, double *u_face);
+*/
+      // we need u_face first
+      extrapToFace(&params, u, u, u_face, lagrInterL, lagrInterR);
+      // then corrected u_face with the common u_I
+      getCommonU(&params, u_face);
+      // know we can get the q_x and q_y
+      deriveGiven(&params, q_x, q_y, u, u, u_face, lagrDerivs, hL, hR);
+      // get u_face back
+      extrapToFace(&params, u, u, u_face, lagrInterL, lagrInterR);
+      // get q_x_face adn q_y_face
+      extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL, lagrInterR);
+      extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL, lagrInterR);
+      // get flux
+      getFlux(&params, u, q_x, q_y, f, g);
+      // get f_face
+      extrapToFace(&params, f, g, f_face, lagrInterL, lagrInterR);
+      // get interface flux (both inviscid and viscous within the same func)
+      getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+      // get the final result
+      deriveGiven(&params, u, u, f, g, f_face, lagrDerivs, hL, hR);
+
+
 
       // assign neg div to k
       //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
@@ -681,7 +772,7 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       double eps = 0.000001;
       old_u[0*params.columnL+0*params.nelem+0] += eps;
       superFunc(&params, old_u, f, g, u_face, f_face, lagrInterL, lagrInterR);
-      computeFlux(&params, u_face, f_face, u_hat_face);
+      computeFlux(&params, u_face, f_face, fv_face, u_hat_face);
       update(&params, old_u, f, g, f_face, lagrDerivs, hL, hR);
       std::cout << "\nJACOBIAN\n";
       for ( int j = 0; j < params.nse; j++ )
@@ -780,7 +871,7 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
   solution.open("solution.csv");
   double x, y, x_L =-10, x_R = 10, y_B =-10, y_T = 10;
   double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
-  double q[4];
+  double avg_u[4];
   int i_elem;
   for ( int i = 0; i < params.nelem_x; i++ )
   {
@@ -789,16 +880,16 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       i_elem = j*params.nelem_x+i;
       x = x_L + i*dx + dx/2.0;
       y = y_B + j*dy + dy/2.0;
-      for ( int k = 0; k < params.nvar; k++ ) q[k] = 0;
+      for ( int k = 0; k < params.nvar; k++ ) avg_u[k] = 0;
       for ( int k = 0; k < params.nse; k++ )
       {
         for ( int l = 0; l < params.nvar; l++ )
         {
-          q[l] += u[k*params.columnL+i_elem+l*params.nelem];
+          avg_u[l] += u[k*params.columnL+i_elem+l*params.nelem];
         }
       }
       solution << x << ", " << y;
-      for ( int k = 0; k < params.nvar; k++ ) solution << ", "  << q[k]/params.nse;
+      for ( int k = 0; k < params.nvar; k++ ) solution << ", "  << avg_u[k]/params.nse;
       solution << "\n";
     }
   }
@@ -809,6 +900,382 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
 
   return 0;
 }
+
+
+
+
+// NEW SET OF FUNCTIONS COMPUTABLE WITH NAVIER-STOKES;
+
+void deriveGiven( essential *params, 
+                  double *pd_X_ksi, double *pd_Y_eta, double *X, double *Y, double *fixed_f,
+                  double *lagrDerivs, double *hL, double *hR )
+{
+
+  double *dummy_x = new double[params->nse];
+  double *dummy_y = new double[params->nse];
+
+  int ji_row, indx_L, indx_R, indx_B, indx_T;
+
+  for ( int i_elem = 0; i_elem < params->columnL; i_elem++ )
+  {
+    //rowsT
+    for ( int j = 0; j < params->nse; j++ ) {dummy_x[j] = 0; dummy_y[j] = 0;}
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      indx_L = (4*(params->porder+1)-1-j)*params->columnL+i_elem;
+      indx_R = (params->porder+1+j)*params->columnL+i_elem;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        ji_row = j*(params->porder+1)+i;
+        indx_B = i*params->columnL+i_elem;
+        indx_T = (3*(params->porder+1)-1-i)*params->columnL+i_elem;
+        for ( int k = 0; k < params->porder+1; k++ )
+        {
+          //jk_row = j*(params->porder+1);
+          dummy_x[ji_row] += X[(j*(params->porder+1)+k)*params->columnL+i_elem]
+                          *lagrDerivs[i*(params->porder+1)+k];
+          dummy_y[ji_row] += Y[(k*(params->porder+1)+i)*params->columnL+i_elem]
+                          *lagrDerivs[j*(params->porder+1)+k];
+        }
+        dummy_x[ji_row] -= fixed_f[indx_L]*hL[i] + fixed_f[indx_R]*hR[i];
+        dummy_y[ji_row] -= fixed_f[indx_B]*hL[j] + fixed_f[indx_T]*hR[j];
+      }
+    }
+    for ( int j = 0; j < params->nse; j++ )
+    {
+      pd_X_ksi[j*params->columnL+i_elem] =-dummy_x[j]/params->jacob;
+      pd_Y_eta[j*params->columnL+i_elem] =-dummy_y[j]/params->jacob;
+    }
+  }
+
+  delete[] dummy_x, dummy_y;
+
+  return;
+}
+
+
+void extrapToFace( essential *params,
+                   double *X, double *Y, double *face,
+                   double *lagrInterL, double *lagrInterR )
+{
+
+  int *loc_q = new int[params->nvar];
+
+  int indx_L, indx_R, indx_B, indx_T, indx_elem;
+
+  for ( int i_elem = 0; i_elem < params->nelem; i_elem++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i_elem+j*params->nelem; //column pos
+    for ( int j = 0; j < params->nvar; j++ )
+    {
+      for ( int k = 0; k < params->nfe; k++ )
+      {
+        face[params->columnL*k + loc_q[j]] = 0;
+      }
+    }
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      for ( int k = 0; k < params->nvar; k++ )
+      {
+        indx_L = (4*(params->porder+1)-1-j)*params->columnL+loc_q[k];
+        indx_R = (params->porder+1+j)*params->columnL+loc_q[k];
+        for ( int i = 0; i < params->porder+1; i++ )
+        {
+          indx_elem = (j*(params->porder+1)+i)*params->columnL+loc_q[k];
+          indx_B = i*params->columnL+loc_q[k];
+          indx_T = (3*(params->porder+1)-1-i)*params->columnL+loc_q[k];
+          face[indx_L] += lagrInterL[i]*X[indx_elem];
+          face[indx_R] += lagrInterR[i]*X[indx_elem];
+          face[indx_B] += lagrInterL[j]*Y[indx_elem];
+          face[indx_T] += lagrInterR[j]*Y[indx_elem];
+        }
+      }
+
+    }
+  }
+
+  delete[] loc_q;
+  return;
+}
+
+
+
+void getInterFlux( essential* params,
+                   double *f_face, double *u_face, double *q_x_face, double *q_y_face, double *u_hat_face )
+{
+
+  //int loc_q[nvar];
+  //double u_L[nvar], u_R[nvar], f_I[nvar];
+  int *loc_q = new int[params->nvar];
+  double *u_L = new double[params->nvar];
+  double *u_R = new double[params->nvar];
+  double *f_I = new double[params->nvar];
+  double *u_hat = new double[params->nvar];
+
+  double *fv_L = new double[params->nvar];
+  double *gv_L = new double[params->nvar];
+  double *fv_R = new double[params->nvar];
+  double *gv_R = new double[params->nvar];
+  double *pd_U_x_L = new double[params->nvar];
+  double *pd_U_y_L = new double[params->nvar];
+  double *pd_U_x_R = new double[params->nvar];
+  double *pd_U_y_R = new double[params->nvar];
+
+  int *pairL = new int[params->porder+1];
+  int *pairR = new int[params->porder+1];
+
+  int next_elem, indx_L, indx_R;
+  //double n_x, n_y;
+  //roe_flux(u_R, u_L, n_x, n_y, f_I);
+
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
+  {
+    for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
+    {
+      int i_elem = i_y*params->nelem_x+i_x;
+      for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+      // left and right
+      if ( i_x != params->nelem_x-1 ) next_elem = 1;
+      else next_elem = 1-params->nelem_x; //if at the end
+      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
+      //pairL[0] = 4 ; pairL[1] = 5 ; pairL[2] = 6 ; pairL[3] = 7 ;
+      //pairR[0] = 15; pairR[1] = 14; pairR[2] = 13; pairR[3] = 12;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+          //f_I[j] = u_L[j];//linear advection
+
+          pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+          pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+          pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+          pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+        }
+        roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
+        //left side
+        nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
+        //right side
+        nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only fv_R
+
+        for ( int j = 0; j < params->nvar; j++ )
+          f_I[j] += 0.5*(fv_L[j]+fv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(fv_L[j]-fv_R[j]);
+
+        //overwrite f_face
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          indx_L = pairL[i]*params->columnL + loc_q[j];
+          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+          f_face[indx_L] -= f_I[j];// - f_face[indx_L];
+          f_face[indx_R] -= f_I[j];// - f_face[indx_R];
+          u_hat_face[indx_L] = u_hat[j];
+          u_hat_face[indx_R] =-u_hat[j];
+        }
+      }
+      // bottom and top
+      if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
+      else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
+      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+      //pairL[0] = 11; pairL[1] = 10; pairL[2] = 9; pairL[3] = 8;
+      //pairR[0] = 0 ; pairR[1] = 1 ; pairR[2] = 2; pairR[3] = 3;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+          //f_I[j] = u_L[j];//linear advection
+
+          pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+          pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+          pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+          pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+        }
+        roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+        //left side
+        nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
+        //right side
+        nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
+
+        for ( int j = 0; j < params->nvar; j++ )
+          f_I[j] += 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
+
+        //overwrite f_face
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          indx_L = pairL[i]*params->columnL + loc_q[j];
+          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+          f_face[indx_L] -= f_I[j];// - f_face[indx_L];
+          f_face[indx_R] -= f_I[j];// - f_face[indx_R];
+          u_hat_face[indx_L] = u_hat[j];
+          u_hat_face[indx_R] =-u_hat[j];
+        }
+      }
+    }
+  }
+
+  delete[] loc_q, u_L, u_R, f_I, u_hat, pairL, pairR;
+  delete[] fv_L, gv_L, fv_L, gv_L, pd_U_x_L, pd_U_y_L, pd_U_x_R, pd_U_y_R;
+  return;
+}
+
+
+void getFlux( essential* params, 
+              double *u, double *q_x, double *q_y, double *f, double *g )
+{
+  // compute flux on the solution nodes
+
+  //int loc_q[nvar];
+  int *loc_q = new int[params->nvar];
+
+  double *fv_node = new double[params->nvar];
+  double *gv_node = new double[params->nvar];
+  double *U_vals = new double[params->nvar];
+  double *pd_U_x = new double[params->nvar];
+  double *pd_U_y = new double[params->nvar];
+  //double vel_u, vel_v, p;
+
+  int indx_L, indx_R, indx_B, indx_T, indx_elem;
+
+  for ( int i_elem = 0; i_elem < params->nelem; i_elem++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i_elem+j*params->nelem; //column pos
+    //rows
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        //index of the first data in the row; +loc_q[k] gives the correct pos
+        indx_elem = (j*(params->porder+1)+i)*params->columnL;
+
+        for ( int k = 0; k < params->nvar; k++ )
+        {
+          U_vals[k] = u[indx_elem+loc_q[k]];
+          pd_U_x[k] = q_x[indx_elem+loc_q[k]];
+          pd_U_y[k] = q_y[indx_elem+loc_q[k]];
+        }
+        nodeViscFlux(U_vals, pd_U_x, pd_U_y, params->mu, params->Pr, fv_node, gv_node);
+
+        f[indx_elem+loc_q[0]] = u[indx_elem+loc_q[1]];
+        g[indx_elem+loc_q[0]] = u[indx_elem+loc_q[2]];
+        double rho = u[indx_elem+loc_q[0]];
+        double vel_u = u[indx_elem+loc_q[1]]/rho;
+        double vel_v = u[indx_elem+loc_q[2]]/rho;
+        double E = u[indx_elem+loc_q[3]];
+        double p = (gammaVal-1)*(E-0.5*rho*(vel_u*vel_u+vel_v*vel_v));
+        f[indx_elem+loc_q[1]] = rho*vel_u*vel_u + p;
+        g[indx_elem+loc_q[1]] = rho*vel_u*vel_v;
+        f[indx_elem+loc_q[2]] = rho*vel_u*vel_v;//rho*vel_v*vel_u;
+        g[indx_elem+loc_q[2]] = rho*vel_v*vel_v + p;
+        f[indx_elem+loc_q[3]] = (E+p)*vel_u;
+        g[indx_elem+loc_q[3]] = (E+p)*vel_v;
+
+        for ( int k = 0; k < params->nvar; k++ )
+        {
+          f[indx_elem+loc_q[k]] += fv_node[k];
+          g[indx_elem+loc_q[k]] += gv_node[k];
+        }
+
+        /*
+        for ( int k = 0; k < params->nvar; k++ )
+        {
+          f[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
+          g[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
+        }
+        */
+      }
+    }
+  }
+
+  delete[] loc_q, fv_node, gv_node, U_vals, pd_U_x, pd_U_y;
+  return;
+}
+
+void getCommonU(essential *params, double *u_face)
+{
+
+  //int loc_q[nvar];
+  //double u_L[nvar], u_R[nvar], f_I[nvar];
+  int *loc_q = new int[params->nvar];
+  double *u_L = new double[params->nvar];
+  double *u_R = new double[params->nvar];
+  double *u_I = new double[params->nvar];
+
+  int *pairL = new int[params->porder+1];
+  int *pairR = new int[params->porder+1];
+
+  int next_elem, indx_L, indx_R;
+  //double n_x, n_y;
+  //roe_flux(u_R, u_L, n_x, n_y, f_I);
+
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
+  {
+    for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
+    {
+      int i_elem = i_y*params->nelem_x+i_x;
+      for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+      // left and right
+      if ( i_x != params->nelem_x-1 ) next_elem = 1;
+      else next_elem = 1-params->nelem_x; //if at the end
+      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+        }
+        //overwrite f_face
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          indx_L = pairL[i]*params->columnL + loc_q[j];
+          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+          u_face[indx_L] -= u_I[j];// - u_face[indx_L];
+          u_face[indx_R] -= u_I[j];// - u_face[indx_R];
+        }
+      }
+      // bottom and top
+      if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
+      else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
+      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+        }
+        //overwrite f_face
+        for ( int j = 0; j < params->nvar; j++ )
+        {
+          indx_L = pairL[i]*params->columnL + loc_q[j];
+          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+          u_face[indx_L] -= u_I[j];// - u_face[indx_L];
+          u_face[indx_R] -= u_I[j];// - u_face[indx_R];
+        }
+      }
+    }
+  }
+
+  delete[] loc_q, u_L, u_R, u_I, pairL, pairR;
+  return;
+}
+
+
+
+
+
+
+
+
+
 
 
 
@@ -900,7 +1367,7 @@ void superFunc( essential* params, double *u, double *f, double *g,
   return;
 }
 
-void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face)
+void computeFlux(essential* params, double *u_face, double *f_face, double *fv_face, double *u_hat_face)
 {
 
   //int loc_q[nvar];
@@ -910,6 +1377,7 @@ void computeFlux(essential* params, double *u_face, double *f_face, double *u_ha
   double *u_R = new double[params->nvar];
   double *f_I = new double[params->nvar];
   double *u_hat = new double[params->nvar];
+  double *u_I = new double[params->nvar];
 
   int *pairL = new int[params->porder+1];
   int *pairR = new int[params->porder+1];
@@ -938,6 +1406,8 @@ void computeFlux(essential* params, double *u_face, double *f_face, double *u_ha
           u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
           //f_I[j] = u_L[j];//linear advection
+          //u_I;
+          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
         }
         roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
         //overwrite f_face
@@ -949,6 +1419,11 @@ void computeFlux(essential* params, double *u_face, double *f_face, double *u_ha
           f_face[indx_R] = f_I[j] - f_face[indx_R];
           u_hat_face[indx_L] = u_hat[j];
           u_hat_face[indx_R] =-u_hat[j];
+          u_face[indx_L] = u_I[j] - u_face[indx_L];
+          u_face[indx_R] = u_I[j] - u_face[indx_R];
+          //fv_I, tau term;
+          fv_face[indx_L] = params->tau*(u_L[j] - u_R[j]);
+          fv_face[indx_R] = params->tau*(u_R[j] - u_L[j]);
         }
       }
       // bottom and top
@@ -965,6 +1440,8 @@ void computeFlux(essential* params, double *u_face, double *f_face, double *u_ha
           u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
           u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
           //f_I[j] = u_L[j];//linear advection
+          //u_I;
+          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
         }
         roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
         //overwrite f_face
@@ -976,12 +1453,17 @@ void computeFlux(essential* params, double *u_face, double *f_face, double *u_ha
           f_face[indx_R] = f_I[j] - f_face[indx_R];
           u_hat_face[indx_L] = u_hat[j];
           u_hat_face[indx_R] =-u_hat[j];
+          u_face[indx_L] = u_I[j] - u_face[indx_L];
+          u_face[indx_R] = u_I[j] - u_face[indx_R];
+          //fv_I, tau term;
+          fv_face[indx_L] = params->tau*(u_L[j] - u_R[j]);
+          fv_face[indx_R] = params->tau*(u_R[j] - u_L[j]);
         }
       }
     }
   }
 
-  delete[] loc_q, u_L, u_R, f_I, pairL, pairR;
+  delete[] loc_q, u_L, u_R, f_I, u_hat, u_I, pairL, pairR;
   return;
 }
 
@@ -1023,6 +1505,135 @@ void update( essential *params, double *u, double *f, double *g, double *f_face,
   }
 
   delete[] dummy;
+  return;
+}
+
+void get_q(essential *params, double *q_x, double *q_y, double *u, double *u_face, double *lagrDerivs, double *hL, double *hR)
+{
+
+  double *dummy_x = new double[params->nse];
+  double *dummy_y = new double[params->nse];
+
+  int ji_row, indx_L, indx_R, indx_B, indx_T;
+
+  for ( int i_elem = 0; i_elem < params->columnL; i_elem++ )
+  {
+    //rowsT
+    for ( int j = 0; j < params->nse; j++ ) {dummy_x[j] = 0; dummy_y[j] = 0;}
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      indx_L = (4*(params->porder+1)-1-j)*params->columnL+i_elem;
+      indx_R = (params->porder+1+j)*params->columnL+i_elem;
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        ji_row = j*(params->porder+1)+i;
+        indx_B = i*params->columnL+i_elem;
+        indx_T = (3*(params->porder+1)-1-i)*params->columnL+i_elem;
+        for ( int k = 0; k < params->porder+1; k++ )
+        {
+          //jk_row = j*(params->porder+1);
+          dummy_x[ji_row] += u[(j*(params->porder+1)+k)*params->columnL+i_elem]
+                          *lagrDerivs[i*(params->porder+1)+k];
+          dummy_y[ji_row] += u[(k*(params->porder+1)+i)*params->columnL+i_elem]
+                          *lagrDerivs[j*(params->porder+1)+k];
+        }
+        dummy_x[ji_row] += u_face[indx_L]*hL[i]+u_face[indx_R]*hR[i];
+        dummy_y[ji_row] += u_face[indx_B]*hL[j]+u_face[indx_T]*hR[j];
+      }
+    }
+    for ( int j = 0; j < params->nse; j++ )
+    {
+      q_x[j*params->columnL+i_elem] =-dummy_x[j]/params->jacob;
+      q_y[j*params->columnL+i_elem] =-dummy_y[j]/params->jacob;
+    }
+  }
+
+  delete[] dummy_x, dummy_y;
+
+  return;
+}
+
+//      viscFlux(&params, u, q, fv, gv, fv_face);
+void viscFlux( essential *params, double *u, double *q_x, double *q_y, double *fv, double *gv, double *fv_face,
+               double *lagrInterL, double *lagrInterR )
+{
+//get fv and gv first
+//then fv_face using fv_I and fv and gv face interpolation
+
+  int *loc_q = new int[params->nvar];
+  double *fv_node = new double[params->nvar];
+  double *gv_node = new double[params->nvar];
+  double *U_vals = new double[params->nvar];
+  double *pd_U_x = new double[params->nvar];
+  double *pd_U_y = new double[params->nvar];
+
+  //double vel_u, vel_v, p;
+
+  int indx_L, indx_R, indx_B, indx_T, indx_elem;
+
+  for ( int i_elem = 0; i_elem < params->nelem; i_elem++ )
+  {
+    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i_elem+j*params->nelem; //column pos
+    //rows
+    for ( int j = 0; j < params->porder+1; j++ )
+    {
+      for ( int i = 0; i < params->porder+1; i++ )
+      {
+        //index of the first data in the row; +loc_q[k] gives the correct pos
+        indx_elem = (j*(params->porder+1)+i)*params->columnL;
+
+
+        for ( int k = 0; k < params->nvar; k++ )
+        {
+          U_vals[k] = u[indx_elem+loc_q[k]];
+          pd_U_x[k] = q_x[indx_elem+loc_q[k]];
+          pd_U_y[k] = q_y[indx_elem+loc_q[k]];
+        }
+
+        nodeViscFlux(U_vals, pd_U_x, pd_U_y, params->mu, params->Pr, fv_node, gv_node);
+
+        for ( int k = 0; k < params->nvar; k++ )
+        {
+          fv[indx_elem+loc_q[k]] = fv_node[k];
+          gv[indx_elem+loc_q[k]] = gv_node[k];
+        }
+
+      }
+
+      for ( int k = 0; k < params->nvar; k++ )
+      {
+        indx_L = (4*(params->porder+1)-1-j)*params->columnL+loc_q[k];//i_elem;
+        indx_R = (params->porder+1+j)*params->columnL+loc_q[k];//+i_elem;
+        for ( int i = 0; i < params->porder+1; i++ )
+        {
+          indx_elem = (j*(params->porder+1)+i)*params->columnL+loc_q[k];//+i_elem;
+          indx_B = i*params->columnL+loc_q[k];//+i_elem;
+          indx_T = (3*(params->porder+1)-1-i)*params->columnL+loc_q[k];//+i_elem;
+          fv_face[indx_L] += lagrInterL[i]*fv[indx_elem];
+          fv_face[indx_R] += lagrInterR[i]*fv[indx_elem];
+          fv_face[indx_B] += lagrInterL[j]*gv[indx_elem];
+          fv_face[indx_T] += lagrInterR[j]*gv[indx_elem];
+        }
+      }
+    }
+  }
+
+  // fv_I and fv_face;
+  // need u_face and q_face first
+
+  delete[] loc_q, fv_node, gv_node, U_vals, pd_U_x, pd_U_y;
+  return;
+
+}
+
+
+
+//      mergeFlux(&params, f, g, f_face, fv, gv, fv_face);
+void mergeFlux(essential *params, double *f, double *g, double *f_face, double *fv, double *gv, double *fv_face)
+{
+
+  //f-=fv; g-=gv; f_face-=fv_face;
+
   return;
 }
 
@@ -1132,6 +1743,47 @@ void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, d
   return;
 }
 
+//nodeViscFlux(U_vals, pd_U_x, pd_U_y, fv_node, gv_node);
+void nodeViscFlux(double *U_vals, double *pd_U_x, double *pd_U_y, double mu, double Pr, double *fv_node, double *gv_node)
+{
+
+  double inv_rho, vel_u, vel_v, E;
+  double pd_u_x, pd_u_y, pd_v_x, pd_v_y, pd_e_x, pd_e_y;
+  double tau_xx, tau_xy, tau_yy, Q_x, Q_y;
+
+  inv_rho = 1/U_vals[0];
+  vel_u = U_vals[1]*inv_rho;
+  vel_v = U_vals[2]*inv_rho;
+  E = U_vals[3]*inv_rho;
+
+  pd_u_x = inv_rho*(pd_U_x[1]-vel_u*pd_U_x[0]);
+  pd_u_y = inv_rho*(pd_U_y[1]-vel_u*pd_U_y[0]);
+  pd_v_x = inv_rho*(pd_U_x[2]-vel_v*pd_U_x[0]);
+  pd_v_y = inv_rho*(pd_U_y[2]-vel_v*pd_U_y[0]);
+  pd_e_x = inv_rho*( (pd_U_x[3]-E*pd_U_x[0])
+                   - vel_u*(pd_U_x[1]-vel_u*pd_U_x[0])
+                   - vel_v*(pd_U_x[2]-vel_v*pd_U_x[0]) );
+  pd_e_x = inv_rho*( (pd_U_y[3]-E*pd_U_y[0])
+                   - vel_u*(pd_U_y[1]-vel_u*pd_U_y[0])
+                   - vel_v*(pd_U_y[2]-vel_v*pd_U_y[0]) );
+
+  tau_xx = mu*(4.0/3.0*pd_u_x-2.0/3.0*pd_v_y);
+  tau_yy = mu*(4.0/3.0*pd_v_y-2.0/3.0*pd_u_x);
+  tau_xy = mu*(pd_u_y+pd_v_x);
+  Q_x = -gammaVal*mu/Pr*pd_e_x;
+  Q_y = -gammaVal*mu/Pr*pd_e_y;
+
+  fv_node[0] = 0;
+  fv_node[1] = tau_xx;
+  fv_node[2] = tau_xy;
+  fv_node[3] = vel_u*tau_xx+vel_v*tau_xy-Q_x;
+  gv_node[0] = 0;
+  gv_node[1] = tau_xy;
+  gv_node[2] = tau_yy;
+  gv_node[3] = vel_u*tau_xy+vel_v*tau_yy-Q_x;
+
+  return;
+}
 
 void calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A)
 {
