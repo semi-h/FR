@@ -37,14 +37,6 @@ void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, do
 void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
 
 
-void superFunc( essential* params, double *u, double *f, double *g, 
-                double *u_face, double *f_face, //double *g_face, 
-                double *lagrInterL, double *lagrInterR );
-void update( essential *params, double *u, double *f, double *g, double *f_face, 
-             double *lagrDerivs, double *hL, double *hR );
-void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face);
-
-
 void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat);
 void calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A);
 void nodeViscFlux(double *U_vals, double *pd_U_x, double *pd_U_y, double mu, double Pr, double *fv_node, double *gv_node);
@@ -104,9 +96,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.005;
+  params.dt     = 0.00001;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 5000;//3125
+  params.maxIte = 1000;//3125
   params.nRK = 4; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
@@ -342,7 +334,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   }
   else if ( params.nvar == 4 )
   {
-    if ( true )
+    if ( false )
     {
       std::cout << "Euler vortex\n";
       double S = 13.5;    // Strength
@@ -395,7 +387,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       }
       for ( int i = 0; i < params.nelem; i++ )
       {
-        if ( i >= 800 && i < 1600 )
+        if ( i >= 0 && i < 1250 )
         {
         for ( int j = 0; j < params.nse; j++ )
         {
@@ -406,6 +398,43 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         }
         }
       }
+    }
+    else if ( true ) // couette flow
+    {
+      double p_c = 100000;
+      double T_w = 300;
+      double c_p = 1005;
+      double u_w = 69.445;  // these values vorrespond to a Mach=0.2, Re=200;
+
+      double rho, u_vel, v_vel, p, x, y, phi;
+      double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+      double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
+      for ( int i = 0; i < params.nelem_x; i++ )
+      {
+        for ( int j = 0; j < params.nelem_y; j++ )
+        {
+          for ( int ii = 0; ii < params.porder+1; ii++ )
+          {
+            for ( int jj = 0; jj < params.porder+1; jj++ )
+            {
+              x = x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+              y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+              phi = (y-y_B)/(y_T-y_B);
+              u_vel = phi*u_w;
+              v_vel = 0;
+              p = p_c;
+              rho = gammaVal/(gammaVal-1)*(2.0*p)/(2*c_p*T_w+params.Pr*u_w*u_w*phi*(1.0-phi));
+              int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
+              u[row_loc+(j*params.nelem_x+i)] = rho;
+              u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
+              u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = rho*v_vel;
+              u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = p/(gammaVal-1.0)
+                                                + 0.5*rho*(u_vel*u_vel+v_vel*v_vel);
+            }
+          }
+        }
+      }
+
     }
     else // gaussian bump in 2D
     {
@@ -494,19 +523,6 @@ ress = 0; // if residual small enough exit sub ite loop
 std::cout << "        sub_ite: " << sub_ite;
       //std::cout << "ite: " << ite << " ";
 
-/*
-      //superFunc creates f, u_face, and f_face arrays
-      superFunc( &params, u, f, g, u_face, f_face, //g_face, 
-                 lagrInterL, lagrInterR );
-
-      //call flux function for each colocated uL uR pair of 2 neighbour elements
-      // also update f_face array to have f_I{L/R}-f_D{L/R} as entries
-      computeFlux(&params, u_face, f_face, u_hat_face);
-
-      for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
-      //update solution
-      update(&params, u, f, g, f_face, lagrDerivs, hL, hR);
-*/
 
       // we need u_face first
       extrapToFace(&params, u, u, u_face, lagrInterL, lagrInterR);
@@ -1024,6 +1040,7 @@ void getInterFlux( essential* params,
   //double n_x, n_y;
   //roe_flux(u_R, u_L, n_x, n_y, f_I);
 
+  // get all the interface fluxes at the interior faces
   for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
     for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
@@ -1032,84 +1049,299 @@ void getInterFlux( essential* params,
       for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
       //------------------------------------------------------------------------
       // left and right
-      if ( i_x != params->nelem_x-1 ) next_elem = 1;
-      else next_elem = 1-params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
-      for ( int i = 0; i < params->porder+1; i++ )
+      if ( i_x != params->nelem_x-1 ) // interior zone
       {
-        for ( int j = 0; j < params->nvar; j++ )
+        next_elem = 1;
+        for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+        for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
+        for ( int i = 0; i < params->porder+1; i++ )
         {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
-          //f_I[j] = u_L[j];//linear advection
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+            u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+            //f_I[j] = u_L[j];//linear advection
 
-          pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
-          pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
-          pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
-          pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+            pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+            pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+            pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+            pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+          }
+          roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
+          //left side
+          nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
+          //right side
+          nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only fv_R
+
+          for ( int j = 0; j < params->nvar; j++ )
+            fv_I[j] = 0.5*(fv_L[j]+fv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(fv_L[j]-fv_R[j]);
+
+          //overwrite f_face
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            indx_L = pairL[i]*params->columnL + loc_q[j];
+            indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+            f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
+            f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
+            u_hat_face[indx_L] = u_hat[j];
+            u_hat_face[indx_R] =-u_hat[j];
+          }
         }
-        roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
-        //left side
-        nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
-        //right side
-        nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only fv_R
-
-        for ( int j = 0; j < params->nvar; j++ )
-          fv_I[j] = 0.5*(fv_L[j]+fv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(fv_L[j]-fv_R[j]);
-
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
-          f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
-          u_hat_face[indx_L] = u_hat[j];
-          u_hat_face[indx_R] =-u_hat[j];
-        }
+      }
+      else // right wall
+      {
+        // leave this to BC
+        next_elem = 1-params->nelem_x; //if at the end
       }
       //------------------------------------------------------------------------
       // bottom and top
-      if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
-      else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
-      for ( int i = 0; i < params->porder+1; i++ )
+      if ( i_y != params->nelem_y-1 ) // interior zone
       {
-        for ( int j = 0; j < params->nvar; j++ )
+        next_elem = params->nelem_x;
+        for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+        for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+        for ( int i = 0; i < params->porder+1; i++ )
         {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
-          //f_I[j] = u_L[j];//linear advection
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+            u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+            //f_I[j] = u_L[j];//linear advection
 
-          pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
-          pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
-          pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
-          pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+            pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+            pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+            pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+            pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+          }
+          roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+          //left side
+          nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
+          //right side
+          nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
+
+          for ( int j = 0; j < params->nvar; j++ )
+            fv_I[j] = 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
+
+          //overwrite f_face
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            indx_L = pairL[i]*params->columnL + loc_q[j];
+            indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+            f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
+            f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
+            u_hat_face[indx_L] = u_hat[j];
+            u_hat_face[indx_R] =-u_hat[j];
+          }
         }
-        roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
-        //left side
-        nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
-        //right side
-        nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
-
-        for ( int j = 0; j < params->nvar; j++ )
-          fv_I[j] = 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
-
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
-          f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
-          u_hat_face[indx_L] = u_hat[j];
-          u_hat_face[indx_R] =-u_hat[j];
-        }
+      }
+      else // top wall
+      {
+        // leave this to BC
+        next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
       }
     }
   }
+
+
+  // BC time
+  // left wall
+
+  // right wall
+
+if ( true ) // periodic left and right
+{
+  int i_x = params->nelem_x-1; // right wall
+  for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
+  {
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    next_elem = 1-params->nelem_x;
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+        //f_I[j] = u_L[j];//linear advection
+
+        pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+        pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+      }
+      roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
+      //left side
+      nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
+      //right side
+      nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only fv_R
+
+      for ( int j = 0; j < params->nvar; j++ )
+        fv_I[j] = 0.5*(fv_L[j]+fv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(fv_L[j]-fv_R[j]);
+
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+        f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
+        f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
+        u_hat_face[indx_L] = u_hat[j];
+        u_hat_face[indx_R] =-u_hat[j];
+      }
+    }
+  }
+}
+
+if ( false ) // periodic top and bottom
+{
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
+  {
+    int i_y = params->nelem_y-1; //top wall
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    next_elem = (1-params->nelem_y)*params->nelem_x;
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+        //f_I[j] = u_L[j];//linear advection
+
+        pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+        pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
+      }
+      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+      //left side
+      nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
+      //right side
+      nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
+
+      for ( int j = 0; j < params->nvar; j++ )
+        fv_I[j] = 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
+
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+        f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
+        f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
+        u_hat_face[indx_L] = u_hat[j];
+        u_hat_face[indx_R] =-u_hat[j];
+      }
+    }
+  }
+}
+
+
+if ( true ) {
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
+  {
+    // bottom wall // no slip with u_w = 0, v_w = 0
+    int i_y = 0; //bottom wall
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]]; //bottom of the present element
+        pd_U_x_R[j] = q_x_face[pairR[i]*params->columnL + loc_q[j]];
+        pd_U_x_L[j] = pd_U_x_R[j];
+        pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]];
+        pd_U_y_L[j] = pd_U_y_R[j];
+      }
+      // set u_L for inviscid BC
+      double u_w = 0.0;
+      double v_w = 0.0;
+      double RT = 86142.8571429;//1.0;
+      u_L[0] = u_R[0];
+      u_L[1] = u_R[0]*2.0*u_w - u_R[1];
+      u_L[2] = u_R[0]*2.0*v_w - u_R[2];
+      u_L[3] = u_R[0]*( RT/(gammaVal-1.0) + ( pow(2.0*u_w-u_R[1]/u_R[0],2)
+                                            + pow(2.0*v_w-u_R[2]/u_R[0],2) )*0.5 );
+      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+
+      // set u_L for viscous BC
+      u_L[0] = u_R[0];
+      u_L[1] = u_R[0]*u_w;
+      u_L[2] = u_R[0]*v_w;
+      u_L[3] = u_R[0]*(RT/(gammaVal-1.0) + (u_w*u_w + v_w*v_w)*0.5);
+      //left side
+      nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
+      //right side
+      nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
+
+      for ( int j = 0; j < params->nvar; j++ )
+        fv_I[j] = 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
+
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_R = pairR[i]*params->columnL + loc_q[j];
+        f_face[indx_R] = f_I[j] - fv_I[j] - f_face[indx_R];
+        u_hat_face[indx_R] =-u_hat[j];
+      }
+    }
+
+    // top wall // no slip with u_w = 1, v_w = 0
+    i_y = params->nelem_y-1; //top wall
+    i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+        pd_U_x_L[j] = q_x_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_x_R[j] = pd_U_x_L[j];
+        pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
+        pd_U_y_R[j] = pd_U_y_L[j];
+      }
+      // set u_R for inviscid BC
+      double u_w = 69.445;//1.0;
+      double v_w = 0.0;
+      double RT = 86142.8571429;//1.0;
+      u_R[0] = u_L[0];
+      u_R[1] = u_L[0]*2.0*u_w - u_L[1];
+      u_R[2] = u_L[0]*2.0*v_w - u_L[2];
+      u_R[3] = u_L[0]*( RT/(gammaVal-1.0) + ( pow(2.0*u_w-u_L[1]/u_L[0],2)
+                                            + pow(2.0*v_w-u_L[2]/u_L[0],2) )*0.5 );
+      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+
+      // set u_R for viscous BC
+      u_R[0] = u_L[0];
+      u_R[1] = u_L[0]*u_w;
+      u_R[2] = u_L[0]*v_w;
+      u_R[3] = u_L[0]*(RT/(gammaVal-1.0) + (u_w*u_w + v_w*v_w)*0.5);
+      //left side
+      nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
+      //right side
+      nodeViscFlux(u_R, pd_U_x_R, pd_U_y_R, params->mu, params->Pr, fv_R, gv_R); // use only gv_R
+
+      for ( int j = 0; j < params->nvar; j++ )
+        fv_I[j] = 0.5*(gv_L[j]+gv_R[j]) + params->tau*(u_L[j]-u_R[j]) + params->beta*(gv_L[j]-gv_R[j]);
+
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        f_face[indx_L] = f_I[j] - fv_I[j] - f_face[indx_L];
+        u_hat_face[indx_L] = u_hat[j];
+      }
+    }
+  }
+} // if couette
+
 
   delete[] loc_q, u_L, u_R, f_I, u_hat, pairL, pairR;
   delete[] fv_L, gv_L, fv_L, gv_L, pd_U_x_L, pd_U_y_L, pd_U_x_R, pd_U_y_R;
@@ -1211,278 +1443,199 @@ void getCommonU(essential *params, double *u_face)
       int i_elem = i_y*params->nelem_x+i_x;
       for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
       // left and right
-      if ( i_x != params->nelem_x-1 ) next_elem = 1;
-      else next_elem = 1-params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
-      for ( int i = 0; i < params->porder+1; i++ )
+      if ( i_x != params->nelem_x-1 )
       {
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
-          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
-        }
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          u_face[indx_L] = u_I[j] - u_face[indx_L];
-          u_face[indx_R] = u_I[j] - u_face[indx_R];
-        }
-      }
-      // bottom and top
-      if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
-      else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
-      for ( int i = 0; i < params->porder+1; i++ )
-      {
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
-          u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
-        }
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          u_face[indx_L] = u_I[j] - u_face[indx_L];
-          u_face[indx_R] = u_I[j] - u_face[indx_R];
-        }
-      }
-    }
-  }
-
-  delete[] loc_q, u_L, u_R, u_I, pairL, pairR;
-  return;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-void superFunc( essential* params, double *u, double *f, double *g, 
-                double *u_face, double *f_face, //double *g_face, 
-                double *lagrInterL, double *lagrInterR )
-{
-
-  // interpolate solution to faces
-  // compute flux on the solution nodes
-  // interpolate flux to faces
-
-  //int loc_q[nvar];
-  int *loc_q = new int[params->nvar];
-
-  //double vel_u, vel_v, p;
-
-  int indx_L, indx_R, indx_B, indx_T, indx_elem;
-
-  for ( int i_elem = 0; i_elem < params->nelem; i_elem++ )
-  {
-    for ( int j = 0; j < params->nvar; j++ ) loc_q[j] = i_elem+j*params->nelem; //column pos
-    for ( int j = 0; j < params->nvar; j++ )
-    {
-      for ( int k = 0; k < params->nfe; k++ )
-      {
-        u_face[params->columnL*k + loc_q[j]] = 0;
-        f_face[params->columnL*k + loc_q[j]] = 0;
-        //g_face[params->columnL*k + loc_q[j]] = 0;
-      }
-    }
-    //rows
-    for ( int j = 0; j < params->porder+1; j++ )
-    {
-      for ( int i = 0; i < params->porder+1; i++ )
-      {
-        //index of the first data in the row; +loc_q[k] gives the correct pos
-        indx_elem = (j*(params->porder+1)+i)*params->columnL;
-        
-        f[indx_elem+loc_q[0]] = u[indx_elem+loc_q[1]];
-        g[indx_elem+loc_q[0]] = u[indx_elem+loc_q[2]];
-        double rho = u[indx_elem+loc_q[0]];
-        double vel_u = u[indx_elem+loc_q[1]]/rho;
-        double vel_v = u[indx_elem+loc_q[2]]/rho;
-        double E = u[indx_elem+loc_q[3]];
-        double p = (gammaVal-1)*(E-0.5*rho*(vel_u*vel_u+vel_v*vel_v));
-        f[indx_elem+loc_q[1]] = rho*vel_u*vel_u + p;
-        g[indx_elem+loc_q[1]] = rho*vel_u*vel_v;
-        f[indx_elem+loc_q[2]] = rho*vel_u*vel_v;//rho*vel_v*vel_u;
-        g[indx_elem+loc_q[2]] = rho*vel_v*vel_v + p;
-        f[indx_elem+loc_q[3]] = (E+p)*vel_u;
-        g[indx_elem+loc_q[3]] = (E+p)*vel_v;
-        /*
-        for ( int k = 0; k < params->nvar; k++ )
-        {
-          f[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
-          g[indx_elem+loc_q[k]] = u[indx_elem+loc_q[k]];
-        }
-        */
-      }
-    //}
-    //for ( int j = 0; j < params->porder+1; j++ )
-    //{
-      for ( int k = 0; k < params->nvar; k++ )
-      {
-        indx_L = (4*(params->porder+1)-1-j)*params->columnL+loc_q[k];//i_elem;
-        indx_R = (params->porder+1+j)*params->columnL+loc_q[k];//+i_elem;
+        next_elem = 1;
+        for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+        for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
         for ( int i = 0; i < params->porder+1; i++ )
         {
-          indx_elem = (j*(params->porder+1)+i)*params->columnL+loc_q[k];//+i_elem;
-          indx_B = i*params->columnL+loc_q[k];//+i_elem;
-          indx_T = (3*(params->porder+1)-1-i)*params->columnL+loc_q[k];//+i_elem;
-          u_face[indx_L] += lagrInterL[i]*u[indx_elem];
-          f_face[indx_L] += lagrInterL[i]*f[indx_elem];
-          u_face[indx_R] += lagrInterR[i]*u[indx_elem];
-          f_face[indx_R] += lagrInterR[i]*f[indx_elem];
-          u_face[indx_B] += lagrInterL[j]*u[indx_elem];
-          f_face[indx_B] += lagrInterL[j]*g[indx_elem];//from g
-          u_face[indx_T] += lagrInterR[j]*u[indx_elem];
-          f_face[indx_T] += lagrInterR[j]*g[indx_elem];//from g
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+            u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+            u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+          }
+          //overwrite f_face
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            indx_L = pairL[i]*params->columnL + loc_q[j];
+            indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+            u_face[indx_L] = u_I[j] - u_face[indx_L];
+            u_face[indx_R] = u_I[j] - u_face[indx_R];
+          }
         }
       }
-
-    }
-  }
-
-  delete[] loc_q;
-  return;
-}
-
-void computeFlux(essential* params, double *u_face, double *f_face, double *u_hat_face)
-{
-
-  //int loc_q[nvar];
-  //double u_L[nvar], u_R[nvar], f_I[nvar];
-  int *loc_q = new int[params->nvar];
-  double *u_L = new double[params->nvar];
-  double *u_R = new double[params->nvar];
-  double *f_I = new double[params->nvar];
-  double *u_hat = new double[params->nvar];
-
-  int *pairL = new int[params->porder+1];
-  int *pairR = new int[params->porder+1];
-
-  int next_elem, indx_L, indx_R;
-  //double n_x, n_y;
-  //roe_flux(u_R, u_L, n_x, n_y, f_I);
-
-  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
-  {
-    for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
-    {
-      int i_elem = i_y*params->nelem_x+i_x;
-      for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
-      // left and right
-      if ( i_x != params->nelem_x-1 ) next_elem = 1;
-      else next_elem = 1-params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
-      //pairL[0] = 4 ; pairL[1] = 5 ; pairL[2] = 6 ; pairL[3] = 7 ;
-      //pairR[0] = 15; pairR[1] = 14; pairR[2] = 13; pairR[3] = 12;
-      for ( int i = 0; i < params->porder+1; i++ )
+      else // 
       {
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
-          //f_I[j] = u_L[j];//linear advection
-        }
-        roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j] - f_face[indx_L];
-          f_face[indx_R] = f_I[j] - f_face[indx_R];
-          u_hat_face[indx_L] = u_hat[j];
-          u_hat_face[indx_R] =-u_hat[j];
-        }
+        // leave this to BC
+        next_elem = 1-params->nelem_x; //if at the end
       }
       // bottom and top
-      if ( i_y != params->nelem_y-1 ) next_elem = params->nelem_x;
-      else next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
-      for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
-      for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
-      //pairL[0] = 11; pairL[1] = 10; pairL[2] = 9; pairL[3] = 8;
-      //pairR[0] = 0 ; pairR[1] = 1 ; pairR[2] = 2; pairR[3] = 3;
-      for ( int i = 0; i < params->porder+1; i++ )
+      if ( i_y != params->nelem_y-1 )
       {
-        for ( int j = 0; j < params->nvar; j++ )
+        next_elem = params->nelem_x;
+        for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+        for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+        for ( int i = 0; i < params->porder+1; i++ )
         {
-          u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
-          u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
-          //f_I[j] = u_L[j];//linear advection
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+            u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+            u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+          }
+          //overwrite f_face
+          for ( int j = 0; j < params->nvar; j++ )
+          {
+            indx_L = pairL[i]*params->columnL + loc_q[j];
+            indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+            u_face[indx_L] = u_I[j] - u_face[indx_L];
+            u_face[indx_R] = u_I[j] - u_face[indx_R];
+          }
         }
-        roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
-        //overwrite f_face
-        for ( int j = 0; j < params->nvar; j++ )
-        {
-          indx_L = pairL[i]*params->columnL + loc_q[j];
-          indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
-          f_face[indx_L] = f_I[j] - f_face[indx_L];
-          f_face[indx_R] = f_I[j] - f_face[indx_R];
-          u_hat_face[indx_L] = u_hat[j];
-          u_hat_face[indx_R] =-u_hat[j];
-        }
+      }
+      else // leave this to BC
+      {
+        next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
       }
     }
   }
 
-  delete[] loc_q, u_L, u_R, f_I, u_hat, pairL, pairR;
-  return;
+if ( true ) {
+  // periodic left and right
+  int i_x = params->nelem_x-1;
+  for ( int i_y = 0; i_y < params->nelem_y; i_y++ )
+  {
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    // left and right
+    next_elem = 1-params->nelem_x; //if at the end
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = params->porder+1+i;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = 4*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // right of the present element
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //left of the next element
+        u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+      }
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+        u_face[indx_L] = u_I[j] - u_face[indx_L];
+        u_face[indx_R] = u_I[j] - u_face[indx_R];
+      }
+    }
+  }
 }
 
-void update( essential *params, double *u, double *f, double *g, double *f_face, 
-             double *lagrDerivs, double *hL, double *hR )
-{
-
-  double *dummy = new double[params->nse];
-
-  int ji_row, indx_L, indx_R, indx_B, indx_T;
-
-  for ( int i_elem = 0; i_elem < params->columnL; i_elem++ )
+if ( false ) {
+  // periodic bottom and top
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
-    //rowsT
-    for ( int j = 0; j < params->nse; j++ ) dummy[j] = 0;
-    for ( int j = 0; j < params->porder+1; j++ )
+    int i_y = params->nelem_y-1;
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    // bottom and top
+    next_elem = (1-params->nelem_y)*params->nelem_x; //if at the end
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+    for ( int i = 0; i < params->porder+1; i++ )
     {
-      indx_L = (4*(params->porder+1)-1-j)*params->columnL+i_elem;
-      indx_R = (params->porder+1+j)*params->columnL+i_elem;
-      for ( int i = 0; i < params->porder+1; i++ )
+      for ( int j = 0; j < params->nvar; j++ )
       {
-        ji_row = j*(params->porder+1)+i;
-        indx_B = i*params->columnL+i_elem;
-        indx_T = (3*(params->porder+1)-1-i)*params->columnL+i_elem;
-        for ( int k = 0; k < params->porder+1; k++ )
-        {
-          //jk_row = j*(params->porder+1);
-          dummy[ji_row] += f[(j*(params->porder+1)+k)*params->columnL+i_elem]
-                          *lagrDerivs[i*(params->porder+1)+k];
-          dummy[ji_row] += g[(k*(params->porder+1)+i)*params->columnL+i_elem]
-                          *lagrDerivs[j*(params->porder+1)+k];
-        }
-        dummy[ji_row] += f_face[indx_L]*hL[i]+f_face[indx_R]*hR[i];
-        dummy[ji_row] += f_face[indx_B]*hL[j]+f_face[indx_T]*hR[j];
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]+next_elem]; //bottom of the next element
+        u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+      }
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        indx_R = pairR[i]*params->columnL + loc_q[j]+next_elem;
+        u_face[indx_L] = u_I[j] - u_face[indx_L];
+        u_face[indx_R] = u_I[j] - u_face[indx_R];
       }
     }
-    for ( int j = 0; j < params->nse; j++ )
-      u[j*params->columnL+i_elem] = dummy[j]/params->jacob;
   }
+}
 
-  delete[] dummy;
+if ( true ) { //couette
+  for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
+  {
+    // bottom wall
+    int i_y = 0;
+    int i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    for ( int i = 0; i < params->porder+1; i++ ) pairR[i] = i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_R[j] = u_face[pairR[i]*params->columnL + loc_q[j]]; //bottom of the present element
+      }
+
+      // set u_L with ldg no slip wall, u_w=0, v_w=0;
+      double u_w = 0.0;
+      double v_w = 0.0;
+      double RT = 86142.8571429;//1.0;
+      u_L[0] = u_R[0];
+      u_L[1] = u_R[0]*u_w;
+      u_L[2] = u_R[0]*v_w;
+      u_L[3] = u_R[0]*(RT/(gammaVal-1.0) + (u_w*u_w + v_w*v_w)*0.5);
+
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+      }
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_R = pairR[i]*params->columnL + loc_q[j];
+        u_face[indx_R] = u_I[j] - u_face[indx_R];
+      }
+    }
+
+    // top wall
+    i_y = params->nelem_y-1;
+    i_elem = i_y*params->nelem_x+i_x;
+    for ( int i = 0; i < params->nvar; i++ ) loc_q[i] = i_elem+i*params->nelem;
+    for ( int i = 0; i < params->porder+1; i++ ) pairL[i] = 3*(params->porder+1)-1-i;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_L[j] = u_face[pairL[i]*params->columnL + loc_q[j]]; // top of the present element
+      }
+      // set u_R wrt ldg no slip wall, u_w=1, v_w=0;
+      double u_w = 69.445;//1.0;
+      double v_w = 0.0;
+      double RT = 86142.8571429;//1.0;
+      u_R[0] = u_L[0];
+      u_R[1] = u_L[0]*u_w;
+      u_R[2] = u_L[0]*v_w;
+      u_R[3] = u_L[0]*(RT/(gammaVal-1.0) + (u_w*u_w + v_w*v_w)*0.5);
+
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        u_I[j] = (u_L[j] + u_R[j])*0.5 - params->beta*(u_L[j]-u_R[j]);
+      }
+      //overwrite f_face
+      for ( int j = 0; j < params->nvar; j++ )
+      {
+        indx_L = pairL[i]*params->columnL + loc_q[j];
+        u_face[indx_L] = u_I[j] - u_face[indx_L];
+      }
+    }
+  }
+} //couette
+
+
+  delete[] loc_q, u_L, u_R, u_I, pairL, pairR;
   return;
 }
 
