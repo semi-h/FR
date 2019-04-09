@@ -19,6 +19,8 @@
 #include <fstream>
 #include <math.h>
 #include <cmath>
+#include <iomanip> 
+
 
 #include <lapacke.h>
 #include <lapacke_utils.h>
@@ -26,7 +28,7 @@
 
 struct essential {
   double dt, jacob, j_x, j_y, mu, Pr, beta, tau, ndim, tol;
-  int nvar, porder, nnode, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite;
+  int nvar, porder, nnode, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite, writeOut;
 } ;
 
 const double gammaVal=1.4;
@@ -45,6 +47,7 @@ void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, in
 void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 void correct_Flux( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u, double n_x, double n_y );
 
+void writeSolution(essential *params, double *u, int iter);
 
 // NEW SET OF FUNCTIONS COMPUTABLE WITH NAVIER-STOKES;
 
@@ -77,10 +80,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  L_x = 100;
-  L_y = 100;
-  params.nelem_x = 50;
-  params.nelem_y = 50;
+  L_x = 20;
+  L_y = 20;
+  params.nelem_x = 10;
+  params.nelem_y = 10;
   params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
@@ -96,14 +99,18 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.porder = 3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.00001;
+  params.dt     = 0.2;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 1000;//3125
-  params.nRK = 4; //1 || 4
+  params.maxIte = 25;//3125
+  params.writeOut = 100000;
+  params.nRK = 6; //1 || 4
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
-  params.sub_ite = 1;
-  params.tol = 1e-8;
+  params.sub_ite = 100;
+  params.tol = -8.0;
+
+  bool withMagicA = true;
+  bool analyticFJ = false;
 
   //create mesh!
   //no need for a mesh
@@ -132,6 +139,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   u_face = new double [params.nfe*params.columnL];
   f_face = new double [params.nfe*params.columnL];
 
+  // perturbed_u array
+  double *perturbed_u;
+  perturbed_u = new double [params.nse*params.columnL];
+
   //visc only arrays;
   double *q_x, *q_y, *q_x_face, *q_y_face;
   q_x = new double [params.nse*params.columnL];
@@ -140,13 +151,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   q_y_face = new double [params.nfe*params.columnL];
 
   for ( int i = 0; i < params.nse*params.columnL; i++ )
-  {
-    u[i] = 0; f[i] = 0; g[i] = 0; q_x[i] = 0; q_y[i] = 0;
-  }
+  { u[i] = 0; f[i] = 0; g[i] = 0; q_x[i] = 0; q_y[i] = 0; }
   for ( int i = 0; i < params.nfe*params.columnL; i++ )
-  {
-    u_face[i] = 0; f_face[i] = 0; q_x_face[i] = 0; q_y_face[i] = 0;
-  }
+  { u_face[i] = 0; f_face[i] = 0; q_x_face[i] = 0; q_y_face[i] = 0; }
 
   double *u_hat_face;
   u_hat_face = new double [params.nfe*params.columnL];
@@ -160,6 +167,10 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   Gblock = new double [params.nvar*(params.porder+1)*params.nvar];
   double *rhs;
   rhs = new double [params.nvar*params.nse];
+
+  double *d_magicA;
+  d_magicA = new double [params.nvar*params.nse*params.nvar*params.nse];
+
 
   // element wise interface jacobians;
   double *F_I_LR, *G_I_BT;
@@ -230,8 +241,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     double pi = 4.0*atan(1.0), param = 2.0*cos(pi/18.0)/sqrt(3);
     std::cout << "alpha param: " << param << "\n";
 
-    butcher_a[0] = (1+param)*0.5; butcher_a[1] = 0;             butcher_a[2] = 0;
-    butcher_a[3] =-param*0.5;     butcher_a[4] = (1+param)*0.5; butcher_a[5] = 0;
+    butcher_a[0] = (1+param)*0.5;
+    butcher_a[3] =-param*0.5;     butcher_a[4] = (1+param)*0.5;
     butcher_a[6] = 1+param;       butcher_a[7] =-(1+2*param);   butcher_a[8] = (1+param)*0.5;
 
     butcher_b[0] = 1/(6*param*param); butcher_b[1] = 1-1/(3*param*param); butcher_b[2] = 1/(6*param*param);
@@ -242,20 +253,17 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   else if ( params.nRK == 6 )
   {
     //1st row
-    butcher_a[0] = 0.25; butcher_a[1] = 0; butcher_a[2] = 0;
-      butcher_a[3] = 0; butcher_a[4] = 0; butcher_a[5] = 0;
+    butcher_a[0] = 0.25;
     //2nd row
-    butcher_a[6] = 0.25; butcher_a[7] = 0.25; butcher_a[8] = 0;
-      butcher_a[9] = 0; butcher_a[10] = 0; butcher_a[11] = 0;
+    butcher_a[6] = 0.25; butcher_a[7] = 0.25;
     //3rd row
     butcher_a[12] = 8611.0/62500.0; butcher_a[13] =-1743.0/31250.0; butcher_a[14] = 0.25;
-      butcher_a[15] = 0; butcher_a[16] = 0; butcher_a[17] = 0;
     //4th row
     butcher_a[18] = 5012029.0/34652500.0; butcher_a[19] = -654441.0/2922500.0; butcher_a[20] = 174375.0/388108.0;
-      butcher_a[21] = 0.25; butcher_a[22] = 0; butcher_a[23] = 0;
+      butcher_a[21] = 0.25;
     //5th row
     butcher_a[24] = 15267082809.0/155376265600.0; butcher_a[25] =-71443401.0/120774400.0; butcher_a[26] = 730878875.0/902184768.0;
-      butcher_a[27] = 2285395.0/8070912.0; butcher_a[28] = 0.25; butcher_a[29] = 0;
+      butcher_a[27] = 2285395.0/8070912.0; butcher_a[28] = 0.25;
     //6th row
     butcher_a[30] = 82889.0/524892.0; butcher_a[31] = 0; butcher_a[32] = 15625.0/83664.0;
       butcher_a[33] = 69875.0/102672.0; butcher_a[34] =-2260.0/8211.0; butcher_a[35] = 0.25;
@@ -334,7 +342,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   }
   else if ( params.nvar == 4 )
   {
-    if ( false )
+    if ( true )
     {
       std::cout << "Euler vortex\n";
       double S = 13.5;    // Strength
@@ -399,7 +407,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
         }
       }
     }
-    else if ( true ) // couette flow
+    else if ( false ) // couette flow
     {
       double p_c = 100000;
       double T_w = 300;
@@ -421,9 +429,11 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
               y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
               phi = (y-y_B)/(y_T-y_B);
               u_vel = phi*u_w;
+              //if ( j < 25 ) u_vel = 0;
+              //else u_vel = u_w;
               v_vel = 0;
               p = p_c;
-              rho = gammaVal/(gammaVal-1)*(2.0*p)/(2*c_p*T_w+params.Pr*u_w*u_w*phi*(1.0-phi));
+              rho = gammaVal/(gammaVal-1)*(2.0*p)/(2*c_p*T_w + params.Pr*u_w*u_w*phi*(1.0-phi));
               int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
               u[row_loc+(j*params.nelem_x+i)] = rho;
               u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
@@ -485,6 +495,7 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   double *dummyU = new double[params.nvar*params.nse];
 
   double ress, conservation;
+  double res[4] = {0};
 
   std::cout << "main loop begins\nite: \n";
   //std::ofstream fface;
@@ -503,24 +514,25 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     }
     for ( int i_RK = 0; i_RK < params.nRK; i_RK++ )
     {
-/*
+
       // DIRK
       // initial guess for intermediate negDiv, ks
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
         u[j] = old_u[j];
-        for ( int k = 0; k < i_RK; k++ )
+        for ( int k = 0; k < i_RK+1; k++ )
         {
-          u[j] += params.dt*butcher_a[i_RK*params.nRK+k]*ks[k][j];
+          u[j] += butcher_a[i_RK*params.nRK+k]*ks[k][j]*params.dt;
         }
       }
-*/
-ress = 10;
+
+ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
 for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
-if ( ress < params.tol ) continue;
-ress = 0; // if residual small enough exit sub ite loop
-std::cout << "        sub_ite: " << sub_ite;
+      if ( ress < params.tol ) continue;
+      ress = 0; // if residual small enough exit sub ite loop
+      res[0] = 0; res[1] = 0; res[2] = 0; res[3] = 0;
+      std::cout << "    subIte" << std::setw(4) << sub_ite;
       //std::cout << "ite: " << ite << " ";
 
 
@@ -545,21 +557,29 @@ std::cout << "        sub_ite: " << sub_ite;
            for ( int j = 0; j < params.nse*params.columnL; j++ ) u_curr[j] = u[j];
       deriveGiven(&params, u, u, f, g, f_face, lagrDerivs, hL, hR);
 
+double resM = 0;
+if ( !withMagicA ) {
       //explicit update
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
-        u[j] = old_u[j] - alpha[i_RK]*params.dt*u[j];
+        //u[j] = old_u[j] - alpha[i_RK]*params.dt*u[j]; //// for low storage RK
+        ks[i_RK][j] =-u[j];
+        ress += u[j]*u[j];
       }
-
-/*
+      ress = log10(sqrt(ress));
+}
+else{
       // assign neg div to k
       //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
 
       // change here for the element wise implicit
 
+
       // for each element, create a local matrix, and update the solution by solving resulting linear system
       for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
-      {
+      { //std::cout << i_elem << "\n";
+if (analyticFJ) {
+        // analytic jacobian calls;
         // create the matrix using flux function for each element
         for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) magicA[j] = 0;
         for ( int j = 0; j < params.porder+1; j++ )
@@ -568,10 +588,10 @@ std::cout << "        sub_ite: " << sub_ite;
           for ( int k = 0; k < params.porder+1; k++ )
           {
             F_flux_jacob( &params, i_elem, Fblock, k*params.nvar, 
-                          params.nvar*(params.porder+1), old_u, j*(params.porder+1)+k );
+                          params.nvar*(params.porder+1), old_u, j*(params.porder+1)+k );//u_curr!!!!!!!!!!
 
             G_flux_jacob( &params, i_elem, Gblock, k*params.nvar, 
-                          params.nvar*(params.porder+1), old_u, k*(params.porder+1)+j );
+                          params.nvar*(params.porder+1), old_u, k*(params.porder+1)+j );//u_curr!!!!!!!!!!
           }
 
 
@@ -647,16 +667,67 @@ std::cout << "        sub_ite: " << sub_ite;
           }
         }
 
-///////
-        // add the 1/dt to the diagonal
-        for ( int j = 0; j < params.nvar*params.nse; j++ )
+//for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) d_magicA[j] = magicA[j];
+
+} //analytic FJ
+else { // numeric jacob
+// UP TO THIS POINT ITS JUST magicA
+
+// replace it with the finite differencing the residual method
+// this is still within the element
+
+// perturb the state values of all solution points within the cell one by one 
+// and synthesize the flux jacobian matrix in this way column by column
+
+
+
+
+// [sol_i*params.columnL+var_i*params.nelem+i_elem]
+        for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) magicA[j] = 0;
+        for ( int sol_i = 0; sol_i < params.nse; sol_i++ )
         {
-          //magicA[j*params.nvar*params.nse+j] += 1.0/params.dt;
+          for ( int var_i = 0; var_i < params.nvar; var_i++ )
+          {
+            double eps = 0.000001;
+            for ( int j = 0; j < params.nse*params.columnL; j++ ) perturbed_u[j] = u_curr[j];
+            perturbed_u[sol_i*params.columnL+var_i*params.nelem+i_elem] += eps;
+            // we need u_face first
+            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
+            // then corrected u_face with the common u_I
+            getCommonU(&params, u_face);
+            // know we can get the q_x and q_y
+            deriveGiven(&params, q_x, q_y, perturbed_u, perturbed_u, u_face, lagrDerivs, hL, hR);
+            // get u_face back
+            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
+            // get q_x_face adn q_y_face
+            extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL, lagrInterR);
+            extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL, lagrInterR);
+            // get flux
+            getFlux(&params, perturbed_u, q_x, q_y, f, g);
+            // get f_face
+            extrapToFace(&params, f, g, f_face, lagrInterL, lagrInterR);
+            // get interface flux (both inviscid and viscous within the same func)
+            getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+            // get the final result
+            deriveGiven(&params, perturbed_u, perturbed_u, f, g, f_face, lagrDerivs, hL, hR);
+
+            for ( int j = 0; j < params.nse; j++ )
+            {
+              for ( int k = 0; k < params.nvar; k++ )
+              {
+                int row_loc, col_loc;
+                row_loc = j*params.nvar+k;
+                col_loc = sol_i*params.nvar+var_i;
+                magicA[row_loc*params.nvar*params.nse + col_loc] 
+                                    = ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
+                                      - u[j*params.columnL+k*params.nelem+i_elem] )/eps;
+              }
+            }
+          }
         }
-////////
+}//numeric J
 
-
-
+//for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) resM += pow(magicA[j]-d_magicA[j],2);
 
         // DIRK
         for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
@@ -666,12 +737,9 @@ std::cout << "        sub_ite: " << sub_ite;
 
         for ( int j = 0; j < params.nvar*params.nse; j++ )
         {
-          magicA[j*params.nvar*params.nse+j] += 1;///params.dt;
+          magicA[j*params.nvar*params.nse+j] += 1;//.0/params.dt;
         }
-
-
-
-
+/*
 ////////
         // TEMP- write magicA into file
         fmagicA << i_elem << "\n";
@@ -687,25 +755,29 @@ std::cout << "        sub_ite: " << sub_ite;
         }
         fmagicA << "\n\n";
 /////////
+*/
+
 
         // rhs; u is assigned as rhs temporarily after update func call 
         for ( int j = 0; j < params.nvar; j++ )
         {
           for ( int k = 0; k < params.nse; k++ )
           {
-            //rhs[k*params.nvar+j] = u[k*params.columnL+i_elem+j*params.nelem];
+            //rhs[k*params.nvar+j] =-u[k*params.columnL+i_elem+j*params.nelem];
             //                     - 1/params.dt
             //                      *( u_curr[k*params.columnL+i_elem+j*params.nelem]
             //                       - old_u[k*params.columnL+i_elem+j*params.nelem] );
 
             //DIRK;
             rhs[k*params.nvar+j] =-ks[i_RK][k*params.columnL+i_elem+j*params.nelem]
-                                 + u[k*params.columnL+i_elem+j*params.nelem];
+                                 - u[k*params.columnL+i_elem+j*params.nelem];
                                  //+ 1/params.dt
                                  // *( u_curr[k*params.columnL+i_elem+j*params.nelem]
                                  //  - old_u[k*params.columnL+i_elem+j*params.nelem] );
 
-            if ( j == 0 ) ress += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
+            //if ( j == 0 ) 
+            //ress += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
+            res[j] += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
           }
         }
         // solve the system
@@ -747,7 +819,8 @@ std::cout << "        sub_ite: " << sub_ite;
         }
 
       }//for each element local implicit update
-*/
+      ress = log10(sqrt(res[0]+res[1]+res[2]+res[3]));
+}
 
 
       conservation = 0;
@@ -757,15 +830,23 @@ std::cout << "        sub_ite: " << sub_ite;
         {
           for ( int l = 0; l < params.porder+1; l++ )
           {
-            conservation += u[(k*(params.porder+1)+l)*params.columnL+j]
+            //conservation += u[(k*(params.porder+1)+l)*params.columnL+j]
+            //               *weights[k]*weights[l]*params.jacob;
+            conservation += ( old_u[(k*(params.porder+1)+l)*params.columnL+j]
+                            + params.dt*ks[i_RK][(k*(params.porder+1)+l)*params.columnL+j])
                            *weights[k]*weights[l]*params.jacob;
           }
         }
       }
 
 
-      ress = sqrt(ress);
-      std::cout << "   residual " << ress << "    conservation:" << conservation-CONSERVATION << "\n";
+
+      for ( int j = 0; j < params.nvar; j++ )
+        std::cout << std::fixed << std::setprecision(3) << " " << std::setw(6) << log10(sqrt(res[j]));
+      std::cout << " rT=" << std::setw(6) << ress
+                << "  conservation:" << std::scientific << std::setw(10)
+                << conservation-CONSERVATION << "\n";
+                // << " " << std::fixed << std::setprecision(3) <<  log10(sqrt(resM)) << "\n";
 
 
 
@@ -819,25 +900,12 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
 */
 } // sub_ite
 
-/*
-      // update u after first stage;
-      if ( i_RK+1 /= params.nRK )
-      {
-        for ( int j = 0; j < params.nse*params.columnL; j++ )
-        {
-          u[j] = old_u[j];
-          for ( int k = 0; k < params.nRK; k++ )
-          {
-            u[j] += params.dt*butcher_c[k]*ks[k][j];
-          }
-        }
-      }
-*/
-
     } // R-K loop
 
-/*
+
     // DIRK
+    
+    // butcher table implementation
     // update solution here using all ks stages;
     //explicit update
     for ( int j = 0; j < params.nse*params.columnL; j++ )
@@ -845,11 +913,15 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       u[j] = old_u[j];
       for ( int k = 0; k < params.nRK; k++ )
       {
-        u[j] += params.dt*butcher_b[k]*ks[k][j];
+        u[j] += butcher_b[k]*ks[k][j]*params.dt;
       }
     }
-*/
+
+
+    if ( ite%params.writeOut == 0 ) writeSolution(&params, u, ite);
   } // time iteration
+
+  jumptowrite: writeSolution(&params, u, params.maxIte);
 
 
 /*
@@ -872,6 +944,7 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
   std::cout << log10(L/params.nelem) << "\n";
 */
 
+/*
   jumptowrite: std::cout << "\njumped to write the last state\n";
   std::ofstream solution;
   solution.open("solution.csv");
@@ -899,6 +972,7 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
       solution << "\n";
     }
   }
+*/
 
   double errr=0.0;
   for ( int i = 0; i < params.columnL*params.nse; i++ ) errr += u[i];
@@ -1194,7 +1268,7 @@ if ( true ) // periodic left and right
   }
 }
 
-if ( false ) // periodic top and bottom
+if ( true ) // periodic top and bottom
 {
   for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
@@ -1241,7 +1315,7 @@ if ( false ) // periodic top and bottom
 }
 
 
-if ( true ) {
+if ( false ) { //couette
   for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
     // bottom wall // no slip with u_w = 0, v_w = 0
@@ -1533,7 +1607,7 @@ if ( true ) {
   }
 }
 
-if ( false ) {
+if ( true ) {
   // periodic bottom and top
   for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
@@ -1564,7 +1638,7 @@ if ( false ) {
   }
 }
 
-if ( true ) { //couette
+if ( false ) { //couette
   for ( int i_x = 0; i_x < params->nelem_x; i_x++ )
   {
     // bottom wall
@@ -2014,6 +2088,41 @@ void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, in
 */
   delete[] loc_u;
   return;
+}
+
+
+void writeSolution(essential *params, double *u, int iter)
+{
+
+  std::ofstream solution;
+  char name[50];
+  sprintf(name, "solution_%d.csv", iter);
+  solution.open(name);
+  double x, y, x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+  double dx = (x_R-x_L)/params->nelem_x, dy = (y_T-y_B)/params->nelem_y;
+  double avg_u[4];
+  int i_elem;
+  for ( int i = 0; i < params->nelem_x; i++ )
+  {
+    for ( int j = 0; j < params->nelem_y; j++ )
+    {
+      i_elem = j*params->nelem_x+i;
+      x = x_L + i*dx + dx/2.0;
+      y = y_B + j*dy + dy/2.0;
+      for ( int k = 0; k < params->nvar; k++ ) avg_u[k] = 0;
+      for ( int k = 0; k < params->nse; k++ )
+      {
+        for ( int l = 0; l < params->nvar; l++ )
+        {
+          avg_u[l] += u[k*params->columnL+i_elem+l*params->nelem];
+        }
+      }
+      solution << x << ", " << y;
+      for ( int k = 0; k < params->nvar; k++ ) solution << ", "  << avg_u[k]/params->nse;
+      solution << "\n";
+    }
+  }
+
 }
 
 
