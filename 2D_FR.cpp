@@ -29,6 +29,7 @@
 struct essential {
   double dt, jacob, j_x, j_y, mu, Pr, beta, tau, ndim, tol;
   int nvar, porder, nnode, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite, writeOut;
+  double x_L, x_R, y_B, y_T;
 } ;
 
 const double gammaVal=1.4;
@@ -59,31 +60,35 @@ void extrapToFace( essential *params,
                    double *X, double *Y, double *face,
                    double *lagrInterL, double *lagrInterR );
 void getInterFlux( essential* params,
-                   double *f_face, double *u_face, double *q_x_face, double *q_y_face, double *u_hat_face );
-void getFlux( essential* params, 
-              double *u, double *q_x, double *q_y, double *f, double *g );
+                   double *f_face, double *u_face, 
+                   double *q_x_face, double *q_y_face, double *u_hat_face );
+void getFlux(essential* params, double *u, double *q_x, double *q_y, double *f, double *g);
 void getCommonU(essential *params, double *u_face);
 
+
+//test
+void createMatrix( essential *params,
+                   double **A_lagrDeriv_x, double **A_lagrDeriv_y, double **A_corrector,
+                   double *lagrDerivs, double *hL, double *hR );
 
 
 int main()
 {
-  double ql[4] = {1, 1.5, 0.5, 2.5};
-  double qr[4] = {1, 0.5, 1.5, 2.5};
-  double q_hat[4] = {0};
-  double fluxx[4];
-  roe_flux(ql, qr, 1.0, 0.0, fluxx, q_hat);
-std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] << "\n";
+
   double L = 10;
   essential params;
   double L_x, L_y;
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  L_x = 20;
-  L_y = 20;
-  params.nelem_x = 10;
-  params.nelem_y = 10;
+  params.x_L =-100;
+  params.x_R = 100;
+  params.y_B =-100;
+  params.y_T = 100;
+  L_x = params.x_R - params.x_L;
+  L_y = params.y_T - params.y_B;
+  params.nelem_x = 50;
+  params.nelem_y = 50;
   params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
   params.j_x = L_x/params.nelem_x/2.0;
   params.j_y = L_y/params.nelem_y/2.0;
@@ -101,12 +106,12 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   params.nfe    = 4*(params.porder+1); //only for quad
   params.dt     = 0.2;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 25;//3125
+  params.maxIte = 100;//3125
   params.writeOut = 100000;
-  params.nRK = 6; //1 || 4
+  params.nRK = 6; // explicit:1 || 4 // implicit: 3 || 6
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
-  params.sub_ite = 100;
+  params.sub_ite = 25;
   params.tol = -8.0;
 
   bool withMagicA = true;
@@ -168,9 +173,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   double *rhs;
   rhs = new double [params.nvar*params.nse];
 
-  double *d_magicA;
-  d_magicA = new double [params.nvar*params.nse*params.nvar*params.nse];
-
+  // store the entire diagonal block of jacobians
+  double *JACOB;
+  JACOB = new double [params.nvar*params.nse*params.nvar*params.nse*params.nelem];
 
   // element wise interface jacobians;
   double *F_I_LR, *G_I_BT;
@@ -186,9 +191,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   //butcher table
   double *butcher_a;
   butcher_a = new double [params.nRK*params.nRK];
-  double *butcher_b, *butcher_c;
+  double *butcher_b;//, *butcher_c;
   butcher_b = new double [params.nRK];
-  butcher_c = new double [params.nRK];
+  //butcher_c = new double [params.nRK];
   // dirk storage
   double **ks;
   ks = new double*[params.nRK];
@@ -350,8 +355,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       double R = 1.5;     // Radius
       double pi = 3.141592653589793;
       double f, rho, u_vel, v_vel, p, x, y;
-      double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
-      double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
+      //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
       for ( int i = 0; i < params.nelem_x; i++ )
       {
         for ( int j = 0; j < params.nelem_y; j++ )
@@ -360,8 +365,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
           {
             for ( int jj = 0; jj < params.porder+1; jj++ )
             {
-              x = x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
               f = ((1 - x*x - y*y)/(2*R*R));
               rho = pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), 1/(gammaVal - 1));
               u_vel = 1 + S*y*exp(f)/(2*pi*R);
@@ -415,8 +420,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
       double u_w = 69.445;  // these values vorrespond to a Mach=0.2, Re=200;
 
       double rho, u_vel, v_vel, p, x, y, phi;
-      double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
-      double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
+      //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
       for ( int i = 0; i < params.nelem_x; i++ )
       {
         for ( int j = 0; j < params.nelem_y; j++ )
@@ -425,9 +430,9 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
           {
             for ( int jj = 0; jj < params.porder+1; jj++ )
             {
-              x = x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
-              phi = (y-y_B)/(y_T-y_B);
+              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+              phi = (y-params.y_B)/(params.y_T-params.y_B);
               u_vel = phi*u_w;
               //if ( j < 25 ) u_vel = 0;
               //else u_vel = u_w;
@@ -450,8 +455,8 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
     {
       double x, y, sigma=10, pi=3.141592653589793, mu=0;
       std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
-      double x_L =-100, x_R = 100, y_B =-100, y_T = 100;
-      double dx = (x_R-x_L)/params.nelem_x, dy = (y_T-y_B)/params.nelem_y;
+      //double x_L =-100, x_R = 100, y_B =-100, y_T = 100;
+      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
       for ( int i = 0; i < params.nelem_x; i++ )
       {
         for ( int j = 0; j < params.nelem_y; j++ )
@@ -460,14 +465,18 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
           {
             for ( int jj = 0; jj < params.porder+1; jj++ )
             {
-              x = x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
 
               int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
-              u[row_loc+(j*params.nelem_x+i)] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((y-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x+y)*0.5-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x-y)*0.5-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+0*params.nelem]
+                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+1*params.nelem]
+                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((y-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+2*params.nelem]
+                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x+y)*0.5-mu)/sigma,2));
+              u[row_loc+(j*params.nelem_x+i)+3*params.nelem]
+                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x-y)*0.5-mu)/sigma,2));
             }
           }
         }
@@ -490,9 +499,6 @@ std::cout << fluxx[0] << " " << fluxx[1] << " " << fluxx[2] << " " << fluxx[3] <
   }
 
   std::cout << "conversation(rho): " << CONSERVATION << "\n";
-
-  int *loc_u = new int[params.nvar];
-  double *dummyU = new double[params.nvar*params.nse];
 
   double ress, conservation;
   double res[4] = {0};
@@ -572,8 +578,82 @@ else{
       // assign neg div to k
       //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
 
-      // change here for the element wise implicit
 
+      for ( int i = 0; i < params.nelem*params.nvar*params.nse*params.nvar*params.nse; i++ ) 
+        JACOB[i] = 0;
+      // perturb all the values like a checkerboard
+      for ( int sol_i = 0; sol_i < params.nse; sol_i++ )
+      {
+        for ( int var_i = 0; var_i < params.nvar; var_i++ )
+        {
+          double eps = 0.000001;
+          int n_colors = 5;
+          for ( int i = 0; i < n_colors; i++ ) //the color loop, its 5 for a structured mesh
+          {
+            for ( int j = 0; j < params.nse*params.columnL; j++ ) perturbed_u[j] = u_curr[j];
+            for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
+            {
+              int i_start = i+(i_y%n_colors)*2;
+              while ( i_start >= n_colors ) i_start -= n_colors;
+              for ( int i_x = i_start; i_x < params.nelem_x; i_x += n_colors )
+              {
+                int i_elem = i_y*params.nelem_x+i_x;
+                perturbed_u[sol_i*params.columnL+var_i*params.nelem+i_elem] += eps;
+                //std::cout << sol_i*params.columnL+var_i*params.nelem+i_elem << " color:" << i 
+                //          << " istart:" << i_start
+                //          << "\n";
+              }
+            }
+            // call the residual with perturbed u vector
+            // we need u_face first
+            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
+            // then corrected u_face with the common u_I
+            getCommonU(&params, u_face);
+            // know we can get the q_x and q_y
+            deriveGiven(&params, q_x, q_y, perturbed_u, perturbed_u, u_face, lagrDerivs, hL, hR);
+            // get u_face back
+            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
+            // get q_x_face adn q_y_face
+            extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL, lagrInterR);
+            extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL, lagrInterR);
+            // get flux
+            getFlux(&params, perturbed_u, q_x, q_y, f, g);
+            // get f_face
+            extrapToFace(&params, f, g, f_face, lagrInterL, lagrInterR);
+            // get interface flux (both inviscid and viscous within the same func)
+            getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+            // get the final result
+            deriveGiven(&params, perturbed_u, perturbed_u, f, g, f_face, lagrDerivs, hL, hR);
+
+
+            for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
+            {
+              int i_start = i+(i_y%n_colors)*2;
+              while ( i_start >= n_colors ) i_start -= n_colors;
+              for ( int i_x = i_start; i_x < params.nelem_x; i_x += n_colors )
+              {
+                int i_elem = i_y*params.nelem_x+i_x;
+                // finite difference
+                for ( int j = 0; j < params.nse; j++ )
+                {
+                  for ( int k = 0; k < params.nvar; k++ )
+                  {
+                    // j and k is for row loc;
+                    // sol_i, var_i is for column loc;
+                    int row_loc, col_loc;
+                    row_loc = j*params.nvar+k;
+                    col_loc = sol_i*params.nvar+var_i;
+                    JACOB[ i_elem*params.nvar*params.nse*params.nvar*params.nse
+                         + row_loc*params.nvar*params.nse + col_loc ] 
+                                        += ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
+                                           - u[j*params.columnL+k*params.nelem+i_elem] )/eps;
+                  }
+                }
+              }
+            }
+          } // the color loop
+        }
+      }
 
       // for each element, create a local matrix, and update the solution by solving resulting linear system
       for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
@@ -667,8 +747,6 @@ if (analyticFJ) {
           }
         }
 
-//for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) d_magicA[j] = magicA[j];
-
 } //analytic FJ
 else { // numeric jacob
 // UP TO THIS POINT ITS JUST magicA
@@ -681,7 +759,7 @@ else { // numeric jacob
 
 
 
-
+if ( false ) {
 // [sol_i*params.columnL+var_i*params.nelem+i_elem]
         for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) magicA[j] = 0;
         for ( int sol_i = 0; sol_i < params.nse; sol_i++ )
@@ -725,9 +803,18 @@ else { // numeric jacob
             }
           }
         }
+}
+else { // set magicA from JACOB
+
+  // DIRK
+  for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
+  {
+    magicA[j] = JACOB[i_elem*params.nvar*params.nse*params.nvar*params.nse+j];
+  }
+
+}
 }//numeric J
 
-//for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) resM += pow(magicA[j]-d_magicA[j],2);
 
         // DIRK
         for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
@@ -756,7 +843,6 @@ else { // numeric jacob
         fmagicA << "\n\n";
 /////////
 */
-
 
         // rhs; u is assigned as rhs temporarily after update func call 
         for ( int j = 0; j < params.nvar; j++ )
@@ -978,9 +1064,18 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
   for ( int i = 0; i < params.columnL*params.nse; i++ ) errr += u[i];
   if ( errr != errr ) std::cout << "there is a nan somewhere\n";
 
+
+  delete[] u; delete[] f; delete[] g; delete[] u_face; delete[] f_face;
+  delete[] q_x; delete[] q_y; delete[] q_x_face; delete[] q_y_face;
+  delete[] old_u; delete[] u_curr;
+  delete[] butcher_a; delete[] butcher_b;
+  for ( int i = 0; i < params.nRK; i++ )
+    delete[] ks[i];
+  delete[] ks; delete[] rhs;
+  delete[] magicA; delete[] JACOB;
+  delete[] F_I_LR; delete[] G_I_BT; delete[] Fblock; delete[] Gblock;
   return 0;
 }
-
 
 
 
@@ -1033,7 +1128,7 @@ void deriveGiven( essential *params,
     }
   }
 
-  delete[] dummy_x, dummy_y;
+  delete[] dummy_x; delete[] dummy_y;
 
   return;
 }
@@ -1417,8 +1512,10 @@ if ( false ) { //couette
 } // if couette
 
 
-  delete[] loc_q, u_L, u_R, f_I, u_hat, pairL, pairR;
-  delete[] fv_L, gv_L, fv_L, gv_L, pd_U_x_L, pd_U_y_L, pd_U_x_R, pd_U_y_R;
+  delete[] loc_q; delete[] u_L; delete[] u_R; delete[] f_I; delete[] u_hat;
+  delete[] pairL; delete[] pairR;
+  delete[] fv_I; delete[] fv_L; delete[] gv_L; delete[] fv_R; delete[] gv_R;
+  delete[] pd_U_x_L; delete[] pd_U_y_L; delete[] pd_U_x_R; delete[] pd_U_y_R;
   return;
 }
 
@@ -1489,7 +1586,8 @@ void getFlux( essential* params,
     }
   }
 
-  delete[] loc_q, fv_node, gv_node, U_vals, pd_U_x, pd_U_y;
+  delete[] loc_q; delete[] fv_node; delete[] gv_node;
+  delete[] U_vals; delete[] pd_U_x; delete[] pd_U_y;
   return;
 }
 
@@ -1709,7 +1807,8 @@ if ( false ) { //couette
 } //couette
 
 
-  delete[] loc_q, u_L, u_R, u_I, pairL, pairR;
+  delete[] loc_q; delete[] u_L; delete[] u_R; delete[] u_I;
+  delete[] pairL; delete[] pairR;
   return;
 }
 
@@ -2098,8 +2197,8 @@ void writeSolution(essential *params, double *u, int iter)
   char name[50];
   sprintf(name, "solution_%d.csv", iter);
   solution.open(name);
-  double x, y, x_L =-10, x_R = 10, y_B =-10, y_T = 10;
-  double dx = (x_R-x_L)/params->nelem_x, dy = (y_T-y_B)/params->nelem_y;
+  double x, y;//, x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+  double dx = (params->x_R-params->x_L)/params->nelem_x, dy = (params->y_T-params->y_B)/params->nelem_y;
   double avg_u[4];
   int i_elem;
   for ( int i = 0; i < params->nelem_x; i++ )
@@ -2107,8 +2206,8 @@ void writeSolution(essential *params, double *u, int iter)
     for ( int j = 0; j < params->nelem_y; j++ )
     {
       i_elem = j*params->nelem_x+i;
-      x = x_L + i*dx + dx/2.0;
-      y = y_B + j*dy + dy/2.0;
+      x = params->x_L + i*dx + dx/2.0;
+      y = params->y_B + j*dy + dy/2.0;
       for ( int k = 0; k < params->nvar; k++ ) avg_u[k] = 0;
       for ( int k = 0; k < params->nse; k++ )
       {
@@ -2297,4 +2396,67 @@ void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, do
 }
 
 
+void updateSolution( essential *params, double *u, double *f, double *g, double *f_face,
+                     double *A_lagrDeriv_x, double *A_lagrDeriv_y, double *A_corrector )
+{
+
+
+  //call blas for matrix matrix operations;
+  // u=f*A_lagrDeriv_x+g*A_lagrDeriv_y+f_face*A_corrector
+
+  //INFO = LAPACKE_dgesv(LAPACK_ROW_MAJOR,N,1,magicA,N,IPIV,rhs,1);
+
+//void 	cblas_dgemm (const CBLAS_LAYOUT layout, const CBLAS_TRANSPOSE TransA, const CBLAS_TRANSPOSE TransB, const int M, const int N, const int K, const double alpha, const double *A, const int lda, const double *B, const int ldb, const double beta, double *C, const int ldc)
+
+  int info;
+
+//  info = cblas_dgemm( CblasRowMajor, CblasNoTrans, CblasNoTrans,
+//                      params->nse, params->columnL*params->nvar, params->nse,
+//                      1.0, A_lagrDeriv_x, params->nse, f, params->nse,
+//                      0.0, u, params->nse );
+
+  return;
+}
+
+
+void createMatrix( essential *params, 
+                   double **A_lagrDeriv_x, double **A_lagrDeriv_y, double **A_corrector,
+                   double *lagrDerivs, double *hL, double *hR )
+{
+  int ji_row, indx_L, indx_R, indx_B, indx_T;
+
+  int p_squared = pow(params->porder+1,2);
+  *A_lagrDeriv_x = new double [p_squared*p_squared];
+  *A_lagrDeriv_y = new double [p_squared*p_squared];
+  *A_corrector = new double [p_squared*4*(params->porder+1)];
+  for ( int i = 0; i < p_squared*p_squared; i++ ) {(*A_lagrDeriv_x)[i] = 0; (*A_lagrDeriv_y)[i] = 0;}
+  for ( int i = 0; i < p_squared*4*(params->porder+1); i++ ) (*A_corrector)[i] = 0;
+
+  //rowsT
+  for ( int j = 0; j < params->porder+1; j++ )
+  {
+    indx_L = (4*(params->porder+1)-1-j)*params->columnL;
+    indx_R = (params->porder+1+j)*params->columnL;
+    for ( int i = 0; i < params->porder+1; i++ )
+    {
+      ji_row = j*(params->porder+1)+i;
+      indx_B = i*params->columnL;
+      indx_T = (3*(params->porder+1)-1-i)*params->columnL;
+      for ( int k = 0; k < params->porder+1; k++ )
+      {
+        //jk_row = j*(params->porder+1);
+        (*A_lagrDeriv_x)[(j*(params->porder+1)+k)*p_squared+ji_row] 
+          = lagrDerivs[i*(params->porder+1)+k];
+        (*A_lagrDeriv_y)[(k*(params->porder+1)+i)*p_squared+ji_row] 
+          = lagrDerivs[j*(params->porder+1)+k];
+      }
+      (*A_corrector)[indx_L*4*(params->porder+1)+ji_row] = hL[i];
+      (*A_corrector)[indx_R*4*(params->porder+1)+ji_row] = hR[i];
+      (*A_corrector)[indx_B*4*(params->porder+1)+ji_row] = hL[j];
+      (*A_corrector)[indx_T*4*(params->porder+1)+ji_row] = hR[j];
+    }
+  }
+
+  return;
+}
 
