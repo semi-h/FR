@@ -72,19 +72,45 @@ void createMatrix( essential *params,
                    double *lagrDerivs, double *hL, double *hR );
 
 
-int main()
-{
+int main(int argc, char** argv) 
+{ 
+  std::cout << "You have entered " << argc 
+            << " arguments:" << "\n"; 
 
-  double L = 10;
+  double *joker;
+  joker = new double [argc-1];
+  for (int i = 0; i < argc; ++i) {
+    //std::cout << argv[i] << "\n"; 
+    if ( !i==0 ) {
+      joker[i-1] = atof(argv[i]);
+      std::cout << joker[i-1] << "\n";
+    }
+  }
+
+  double timestep, tolerance, n_cycle;
+  int p_order, max_subite;
+  if ( argc == 6 ) {
+    p_order = atoi(argv[1]);    
+    timestep = atof(argv[2]);
+    tolerance = atof(argv[3]);
+    max_subite = atof(argv[4]);
+    n_cycle = atof(argv[5]);
+  }
+  else {
+    std::cout << "something wrong with the number of arguments supplied\n";
+    std::cout << "p_order timestep tolerance n_cycle\n";
+    return 0;
+  }
+
   essential params;
   double L_x, L_y;
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  params.x_L =-100;
-  params.x_R = 100;
-  params.y_B =-100;
-  params.y_T = 100;
+  params.x_L =-50;
+  params.x_R = 50;
+  params.y_B =-50;
+  params.y_T = 50;
   L_x = params.x_R - params.x_L;
   L_y = params.y_T - params.y_B;
   params.nelem_x = 50;
@@ -101,18 +127,18 @@ int main()
 
   params.ndim   = 2;
   params.nvar   = 4;
-  params.porder = 3; // 0 || 1 || 2 || 3
+  params.porder = p_order;//3; // 0 || 1 || 2 || 3
   params.nse    = pow(params.porder+1,2);
   params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = 0.2;
+  params.dt     = timestep;//0.2;
   params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = 100;//3125
+  params.maxIte = L_x*n_cycle/timestep;//0;//3125
   params.writeOut = 100000;
   params.nRK = 6; // explicit:1 || 4 // implicit: 3 || 6
   params.columnL = params.nvar*params.nelem;
   //params.jacob  = L/params.nelem/2;
-  params.sub_ite = 25;
-  params.tol = -8.0;
+  params.sub_ite = max_subite;//50;
+  params.tol = tolerance;//-4.0;
 
   bool withMagicA = true;
   bool analyticFJ = false;
@@ -135,6 +161,8 @@ int main()
   double *hL, *hR;
   set_correctionDerivs(params.porder, soln_coords, &hL, &hR);
 
+  // number of newton sub iteration for each iteration
+  int *store_nsubite = new int [params.maxIte*params.nRK];
 
   // solution arrays, array of structures
   double *u, *f, *g, *u_face, *f_face;
@@ -210,12 +238,14 @@ int main()
   std::cout << "columnL: " << params.columnL << "\n";
   std::cout << "dx: " << L_x/params.nelem_x << "\n";
   std::cout << "dy: " << L_y/params.nelem_y << "\n";
-  std::cout << "Lenght: " << L << "\n";
+  std::cout << "Lenght: " << L_x << " " << L_y << "\n";
   std::cout << "jacob: " << params.jacob << "\n";
   std::cout << "jacob x: " << params.j_x << "\n";
   std::cout << "jacob y: " << params.j_y << "\n";
   std::cout << "dt: " << params.dt << "\n";
   std::cout << "end time: " << params.maxIte*params.dt << "\n";
+  std::cout << "max newton sub_ite: " << params.sub_ite << "\n";
+  std::cout << "newton cut off tolerance: " << params.tol << "\n";
   std::cout << "RK stage: " << params.nRK << std::endl;
 
   double *alpha;
@@ -294,197 +324,144 @@ int main()
 
 
   // Initialization
-  double rho_0 = 1, u_0 = 0, p_0 = 1;
-  double rho_1 = 0.125, u_1 = 0, p_1 = 0.1;
-
-  if ( params.nvar == 3 )
+  if ( true )
   {
-  double q[3], flux[3];
-  std::cout << "left side\n";
-  q[0] = rho_0; q[1] = rho_0*u_0; q[2] = p_0/(gammaVal-1) + 0.5*rho_0*pow(u_0,2);
-  for ( int i = 0; i < params.nelem/2; i++ )
-  {
-    for ( int j = 0; j < params.porder+1; j++ ) 
-    { //rowN*columnL + columnN
-      //for ( int k = 0; k < nvar; k++ ) u[j][i+k*nelem] = q[k];
-      for ( int k = 0; k < params.nvar; k++ )
-      {
-        u[j*params.columnL + i+k*params.nelem] = q[k];
-        old_u[j*params.columnL + i+k*params.nelem] = 0;
-      }
-    }
-  }
-  std::cout << "right side\n";
-  q[0] = rho_1; q[1] = rho_1*u_1; q[2] = p_1/(gammaVal-1) + 0.5*rho_1*pow(u_1,2);
-  for ( int i = params.nelem/2; i < params.nelem; i++ )
-  {
-    for ( int j = 0; j < params.porder+1; j++ ) 
+    std::cout << "Euler vortex\n";
+    double S = 13.5;    // Strength
+    double M = 0.4;     // Mach number
+    double R = 1.5;     // Radius
+    double pi = 3.141592653589793;
+    double f, rho, u_vel, v_vel, p, x, y;
+    //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+    double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
+    for ( int i = 0; i < params.nelem_x; i++ )
     {
-      for ( int k = 0; k < params.nvar; k++ )
+      for ( int j = 0; j < params.nelem_y; j++ )
       {
-        u[j*params.columnL + i+k*params.nelem] = q[k];
-        old_u[j*params.columnL + i+k*params.nelem] = 0;
+        for ( int ii = 0; ii < params.porder+1; ii++ )
+        {
+          for ( int jj = 0; jj < params.porder+1; jj++ )
+          {
+            x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+            y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+            x = x*20.0/(params.x_R-params.x_L); y = y*20.0/(params.y_T-params.y_B);
+            f = ((1 - x*x - y*y)/(2*R*R));
+            rho = pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), 1/(gammaVal - 1));
+            u_vel = 1 + S*y*exp(f)/(2*pi*R);
+            v_vel = 1 - S*x*exp(f)/(2*pi*R);
+            p = 1/(gammaVal*M*M)*pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), gammaVal/(gammaVal - 1));
+            int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
+            u[row_loc+(j*params.nelem_x+i)] = rho;
+            u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
+            u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = rho*v_vel;
+            u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = p/(gammaVal-1.0)
+                                              + 0.5*rho*(u_vel*u_vel+v_vel*v_vel);
+          }
+        }
       }
     }
   }
-  }
-  else if ( params.nvar == 1 )
+  else if ( false ) // constant q_inf
   {
-    //gaussian bump
-    std::cout << "Advection solver\n";
-    double x, sigma=0.2, pi=3.141592653589793, mu=0;
-    std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
+    double rho_inf = 1, u_inf = 1, v_inf = 0, p_inf = 1;
+    std::cout << "const speed, u=" << u_inf << ", v=" << v_inf << "\n";
     for ( int i = 0; i < params.nelem; i++ )
     {
-      //x = i*L/nelem-5;
-      for ( int j = 0; j < params.porder+1; j++ )
+      for ( int j = 0; j < params.nse; j++ )
       {
-      x = i*L/params.nelem-5 + soln_coords[j]*params.jacob;
-      u[j*params.columnL + i] = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
-      old_u[j*params.columnL + i] = 0;
+        u[j*params.columnL+i+0*params.nelem] = rho_inf;
+        u[j*params.columnL+i+1*params.nelem] = rho_inf*u_inf;
+        u[j*params.columnL+i+2*params.nelem] = rho_inf*v_inf;
+        u[j*params.columnL+i+3*params.nelem] = p_inf/(gammaVal-1.0)
+                                             + 0.5*rho_inf*(u_inf*u_inf+v_inf*v_inf);
+      }
+    }
+    for ( int i = 0; i < params.nelem; i++ )
+    {
+      if ( i >= 0 && i < 1250 )
+      {
+      for ( int j = 0; j < params.nse; j++ )
+      {
+        u[j*params.columnL+i+0*params.nelem] = rho_inf;
+        u[j*params.columnL+i+1*params.nelem] = 0;
+        u[j*params.columnL+i+2*params.nelem] = 0;
+        u[j*params.columnL+i+3*params.nelem] = p_inf/(gammaVal-1.0);
+      }
       }
     }
   }
-  else if ( params.nvar == 4 )
+  else if ( false ) // couette flow
   {
-    if ( true )
+    double p_c = 100000;
+    double T_w = 300;
+    double c_p = 1005;
+    double u_w = 69.445;  // these values vorrespond to a Mach=0.2, Re=200;
+
+    double rho, u_vel, v_vel, p, x, y, phi;
+    //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
+    double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
+    for ( int i = 0; i < params.nelem_x; i++ )
     {
-      std::cout << "Euler vortex\n";
-      double S = 13.5;    // Strength
-      double M = 0.4;     // Mach number
-      double R = 1.5;     // Radius
-      double pi = 3.141592653589793;
-      double f, rho, u_vel, v_vel, p, x, y;
-      //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
-      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
-      for ( int i = 0; i < params.nelem_x; i++ )
+      for ( int j = 0; j < params.nelem_y; j++ )
       {
-        for ( int j = 0; j < params.nelem_y; j++ )
+        for ( int ii = 0; ii < params.porder+1; ii++ )
         {
-          for ( int ii = 0; ii < params.porder+1; ii++ )
+          for ( int jj = 0; jj < params.porder+1; jj++ )
           {
-            for ( int jj = 0; jj < params.porder+1; jj++ )
-            {
-              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
-              f = ((1 - x*x - y*y)/(2*R*R));
-              rho = pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), 1/(gammaVal - 1));
-              u_vel = 1 + S*y*exp(f)/(2*pi*R);
-              v_vel = 1 - S*x*exp(f)/(2*pi*R);
-              p = 1/(gammaVal*M*M)*pow(1 - S*S*M*M*(gammaVal - 1)*exp(2*f)/(8*pi*pi), gammaVal/(gammaVal - 1));
-              int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
-              u[row_loc+(j*params.nelem_x+i)] = rho;
-              u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
-              u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = rho*v_vel;
-              u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = p/(gammaVal-1.0)
-                                                + 0.5*rho*(u_vel*u_vel+v_vel*v_vel);
-            }
+            x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+            y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+            phi = (y-params.y_B)/(params.y_T-params.y_B);
+            u_vel = phi*u_w;
+            //if ( j < 25 ) u_vel = 0;
+            //else u_vel = u_w;
+            v_vel = 0;
+            p = p_c;
+            rho = gammaVal/(gammaVal-1)*(2.0*p)/(2*c_p*T_w + params.Pr*u_w*u_w*phi*(1.0-phi));
+            int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
+            u[row_loc+(j*params.nelem_x+i)] = rho;
+            u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
+            u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = rho*v_vel;
+            u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = p/(gammaVal-1.0)
+                                              + 0.5*rho*(u_vel*u_vel+v_vel*v_vel);
           }
         }
       }
     }
-    else if ( false ) // constant q_inf
-    {
-      double rho_inf = 1, u_inf = 1, v_inf = 0, p_inf = 1;
-      std::cout << "const speed, u=" << u_inf << ", v=" << v_inf << "\n";
-      for ( int i = 0; i < params.nelem; i++ )
-      {
-        for ( int j = 0; j < params.nse; j++ )
-        {
-          u[j*params.columnL+i+0*params.nelem] = rho_inf;
-          u[j*params.columnL+i+1*params.nelem] = rho_inf*u_inf;
-          u[j*params.columnL+i+2*params.nelem] = rho_inf*v_inf;
-          u[j*params.columnL+i+3*params.nelem] = p_inf/(gammaVal-1.0)
-                                               + 0.5*rho_inf*(u_inf*u_inf+v_inf*v_inf);
-        }
-      }
-      for ( int i = 0; i < params.nelem; i++ )
-      {
-        if ( i >= 0 && i < 1250 )
-        {
-        for ( int j = 0; j < params.nse; j++ )
-        {
-          u[j*params.columnL+i+0*params.nelem] = rho_inf;
-          u[j*params.columnL+i+1*params.nelem] = 0;
-          u[j*params.columnL+i+2*params.nelem] = 0;
-          u[j*params.columnL+i+3*params.nelem] = p_inf/(gammaVal-1.0);
-        }
-        }
-      }
-    }
-    else if ( false ) // couette flow
-    {
-      double p_c = 100000;
-      double T_w = 300;
-      double c_p = 1005;
-      double u_w = 69.445;  // these values vorrespond to a Mach=0.2, Re=200;
 
-      double rho, u_vel, v_vel, p, x, y, phi;
-      //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
-      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
-      for ( int i = 0; i < params.nelem_x; i++ )
-      {
-        for ( int j = 0; j < params.nelem_y; j++ )
-        {
-          for ( int ii = 0; ii < params.porder+1; ii++ )
-          {
-            for ( int jj = 0; jj < params.porder+1; jj++ )
-            {
-              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
-              phi = (y-params.y_B)/(params.y_T-params.y_B);
-              u_vel = phi*u_w;
-              //if ( j < 25 ) u_vel = 0;
-              //else u_vel = u_w;
-              v_vel = 0;
-              p = p_c;
-              rho = gammaVal/(gammaVal-1)*(2.0*p)/(2*c_p*T_w + params.Pr*u_w*u_w*phi*(1.0-phi));
-              int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
-              u[row_loc+(j*params.nelem_x+i)] = rho;
-              u[row_loc+(j*params.nelem_x+i)+params.nelem] = rho*u_vel;
-              u[row_loc+(j*params.nelem_x+i)+2*params.nelem] = rho*v_vel;
-              u[row_loc+(j*params.nelem_x+i)+3*params.nelem] = p/(gammaVal-1.0)
-                                                + 0.5*rho*(u_vel*u_vel+v_vel*v_vel);
-            }
-          }
-        }
-      }
-
-    }
-    else // gaussian bump in 2D
-    {
-      double x, y, sigma=10, pi=3.141592653589793, mu=0;
-      std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
-      //double x_L =-100, x_R = 100, y_B =-100, y_T = 100;
-      double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
-      for ( int i = 0; i < params.nelem_x; i++ )
-      {
-        for ( int j = 0; j < params.nelem_y; j++ )
-        {
-          for ( int ii = 0; ii < params.porder+1; ii++ )
-          {
-            for ( int jj = 0; jj < params.porder+1; jj++ )
-            {
-              x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
-              y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
-
-              int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
-              u[row_loc+(j*params.nelem_x+i)+0*params.nelem]
-                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+1*params.nelem]
-                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((y-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+2*params.nelem]
-                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x+y)*0.5-mu)/sigma,2));
-              u[row_loc+(j*params.nelem_x+i)+3*params.nelem]
-                = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x-y)*0.5-mu)/sigma,2));
-            }
-          }
-        }
-      }
-
-
-    }
   }
+  else // gaussian bump in 2D
+  {
+    double x, y, sigma=10, pi=3.141592653589793, mu=0;
+    std::cout << "Gaussian bump with sigma = " << sigma << " and mu = " << mu << "\n";
+    //double x_L =-100, x_R = 100, y_B =-100, y_T = 100;
+    double dx = (params.x_R-params.x_L)/params.nelem_x, dy = (params.y_T-params.y_B)/params.nelem_y;
+    for ( int i = 0; i < params.nelem_x; i++ )
+    {
+      for ( int j = 0; j < params.nelem_y; j++ )
+      {
+        for ( int ii = 0; ii < params.porder+1; ii++ )
+        {
+          for ( int jj = 0; jj < params.porder+1; jj++ )
+          {
+            x = params.x_L + i*dx + dx/2.0 + soln_coords[ii]*params.j_x;
+            y = params.y_B + j*dy + dy/2.0 + soln_coords[jj]*params.j_y;
+
+            int row_loc = (jj*(params.porder+1)+ii)*params.columnL;
+            u[row_loc+(j*params.nelem_x+i)+0*params.nelem]
+              = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((x-mu)/sigma,2));
+            u[row_loc+(j*params.nelem_x+i)+1*params.nelem]
+              = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow((y-mu)/sigma,2));
+            u[row_loc+(j*params.nelem_x+i)+2*params.nelem]
+              = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x+y)*0.5-mu)/sigma,2));
+            u[row_loc+(j*params.nelem_x+i)+3*params.nelem]
+              = 1/(sigma*sqrt(2*pi))*exp(-0.5*pow(((x-y)*0.5-mu)/sigma,2));
+          }
+        }
+      }
+    }
+
+  }
+
 
   double CONSERVATION = 0;
   for ( int j = 0; j < params.nelem; j++ )
@@ -535,6 +512,7 @@ int main()
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
 for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
+      store_nsubite[ite*params.nRK+i_RK] = sub_ite;
       if ( ress < params.tol ) continue;
       ress = 0; // if residual small enough exit sub ite loop
       res[0] = 0; res[1] = 0; res[2] = 0; res[3] = 0;
@@ -578,7 +556,7 @@ else{
       // assign neg div to k
       //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
 
-
+if (!analyticFJ) {
       for ( int i = 0; i < params.nelem*params.nvar*params.nse*params.nvar*params.nse; i++ ) 
         JACOB[i] = 0;
       // perturb all the values like a checkerboard
@@ -654,7 +632,7 @@ else{
           } // the color loop
         }
       }
-
+}
       // for each element, create a local matrix, and update the solution by solving resulting linear system
       for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
       { //std::cout << i_elem << "\n";
@@ -758,61 +736,13 @@ else { // numeric jacob
 // and synthesize the flux jacobian matrix in this way column by column
 
 
-
-if ( false ) {
-// [sol_i*params.columnL+var_i*params.nelem+i_elem]
-        for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ ) magicA[j] = 0;
-        for ( int sol_i = 0; sol_i < params.nse; sol_i++ )
-        {
-          for ( int var_i = 0; var_i < params.nvar; var_i++ )
-          {
-            double eps = 0.000001;
-            for ( int j = 0; j < params.nse*params.columnL; j++ ) perturbed_u[j] = u_curr[j];
-            perturbed_u[sol_i*params.columnL+var_i*params.nelem+i_elem] += eps;
-            // we need u_face first
-            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
-            // then corrected u_face with the common u_I
-            getCommonU(&params, u_face);
-            // know we can get the q_x and q_y
-            deriveGiven(&params, q_x, q_y, perturbed_u, perturbed_u, u_face, lagrDerivs, hL, hR);
-            // get u_face back
-            extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL, lagrInterR);
-            // get q_x_face adn q_y_face
-            extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL, lagrInterR);
-            extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL, lagrInterR);
-            // get flux
-            getFlux(&params, perturbed_u, q_x, q_y, f, g);
-            // get f_face
-            extrapToFace(&params, f, g, f_face, lagrInterL, lagrInterR);
-            // get interface flux (both inviscid and viscous within the same func)
-            getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
-            // get the final result
-            deriveGiven(&params, perturbed_u, perturbed_u, f, g, f_face, lagrDerivs, hL, hR);
-
-            for ( int j = 0; j < params.nse; j++ )
-            {
-              for ( int k = 0; k < params.nvar; k++ )
-              {
-                int row_loc, col_loc;
-                row_loc = j*params.nvar+k;
-                col_loc = sol_i*params.nvar+var_i;
-                magicA[row_loc*params.nvar*params.nse + col_loc] 
-                                    = ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
-                                      - u[j*params.columnL+k*params.nelem+i_elem] )/eps;
-              }
-            }
-          }
-        }
-}
-else { // set magicA from JACOB
-
-  // DIRK
+  // set magicA from JACOB
   for ( int j = 0; j < params.nvar*params.nse*params.nvar*params.nse; j++ )
   {
     magicA[j] = JACOB[i_elem*params.nvar*params.nse*params.nvar*params.nse+j];
   }
 
-}
+
 }//numeric J
 
 
@@ -929,8 +859,8 @@ else { // set magicA from JACOB
 
       for ( int j = 0; j < params.nvar; j++ )
         std::cout << std::fixed << std::setprecision(3) << " " << std::setw(6) << log10(sqrt(res[j]));
-      std::cout << " rT=" << std::setw(6) << ress
-                << "  conservation:" << std::scientific << std::setw(10)
+      std::cout << " rT= " << std::setw(6) << ress
+                << "  conservation:" << std::scientific << std::setw(11)
                 << conservation-CONSERVATION << "\n";
                 // << " " << std::fixed << std::setprecision(3) <<  log10(sqrt(resM)) << "\n";
 
@@ -1008,6 +938,23 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
   } // time iteration
 
   jumptowrite: writeSolution(&params, u, params.maxIte);
+
+  std::cout << "RESULTS===---;\n";
+  std::cout << "subite numbers: " << params.maxIte*params.nRK << "\n";
+  for ( int i = 0; i < params.maxIte*params.nRK; i++ )
+  {
+    std::cout << store_nsubite[i] << "\n";
+  }
+
+  std::cout << "p_order: " << params.porder << "\n";
+  std::cout << "timestep: " << params.dt << "\n";
+  std::cout << "tolerance: " << params.tol << "\n";
+  std::cout << "numberOfIte: " << params.maxIte << "\n";
+  std::cout << "max subite: " << params.sub_ite << "\n";
+
+
+
+  // true error for the euler vortex case (viscous euler????????)
 
 
 /*
