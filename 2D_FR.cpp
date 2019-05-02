@@ -21,6 +21,7 @@
 #include <cmath>
 #include <iomanip> 
 
+#include <string.h>
 
 #include <lapacke.h>
 #include <lapacke_utils.h>
@@ -40,6 +41,7 @@ void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, do
 void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR);
 
 
+void rusanov_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat);
 void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat);
 void calc_matrix_A(double *q_hat, double n_x, double n_y, double *matrix_A);
 void nodeViscFlux(double *U_vals, double *pd_U_x, double *pd_U_y, double mu, double Pr, double *fv_node, double *gv_node);
@@ -48,7 +50,7 @@ void F_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, in
 void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u );
 void correct_Flux( essential *params, int i_elem, double *jacob, int i_start, int jCN, double *u_vals, int i_u, double n_x, double n_y );
 
-void writeSolution(essential *params, double *u, int iter);
+void writeSolution(essential *params, double *u, int iter, double *soln_coords);
 
 // NEW SET OF FUNCTIONS COMPUTABLE WITH NAVIER-STOKES;
 
@@ -74,32 +76,10 @@ void createMatrix( essential *params,
 
 int main(int argc, char** argv) 
 { 
-  std::cout << "You have entered " << argc 
-            << " arguments:" << "\n"; 
+  std::cout << "You have entered " << argc << " arguments:" << "\n"; 
 
-  double *joker;
-  joker = new double [argc-1];
   for (int i = 0; i < argc; ++i) {
-    //std::cout << argv[i] << "\n"; 
-    if ( !i==0 ) {
-      joker[i-1] = atof(argv[i]);
-      std::cout << joker[i-1] << "\n";
-    }
-  }
-
-  double timestep, tolerance, n_cycle;
-  int p_order, max_subite;
-  if ( argc == 6 ) {
-    p_order = atoi(argv[1]);    
-    timestep = atof(argv[2]);
-    tolerance = atof(argv[3]);
-    max_subite = atof(argv[4]);
-    n_cycle = atof(argv[5]);
-  }
-  else {
-    std::cout << "something wrong with the number of arguments supplied\n";
-    std::cout << "p_order timestep tolerance n_cycle\n";
-    return 0;
+    std::cout << argv[i] << "\n"; 
   }
 
   essential params;
@@ -107,41 +87,95 @@ int main(int argc, char** argv)
   //int nelem_x, nelem_y, nnode;
   //double J_x, J_y, Jacob;
 
-  params.x_L =-50;
-  params.x_R = 50;
-  params.y_B =-50;
-  params.y_T = 50;
-  L_x = params.x_R - params.x_L;
-  L_y = params.y_T - params.y_B;
-  params.nelem_x = 50;
-  params.nelem_y = 50;
-  params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
-  params.j_x = L_x/params.nelem_x/2.0;
-  params.j_y = L_y/params.nelem_y/2.0;
-  params.jacob = params.j_x*params.j_y;
-
   params.beta = 0.5;
   params.tau = 0.1;
   params.mu = 0.417;
   params.Pr = 0.72;
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-beta") == 0 ) params.beta = atof(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-tau") == 0 ) params.tau = atof(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-mu") == 0 ) params.mu = atof(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-Pr") == 0 ) params.Pr = atof(argv[i+1]); }
 
-  params.ndim   = 2;
-  params.nvar   = 4;
-  params.porder = p_order;//3; // 0 || 1 || 2 || 3
-  params.nse    = pow(params.porder+1,2);
-  params.nfe    = 4*(params.porder+1); //only for quad
-  params.dt     = timestep;//0.2;
-  params.nelem  = params.nelem_x*params.nelem_y;
-  params.maxIte = L_x*n_cycle/timestep;//0;//3125
+  params.x_L =-50;
+  params.x_R = 50;
+  params.y_B =-50;
+  params.y_T = 50;
+  params.nelem_x = 50;
+  params.nelem_y = 50;
+
+
+  //params.porder = p_order;//3; // 0 || 1 || 2 || 3
+  //params.dt     = timestep;//0.2;
+  //params.maxIte = L_x*n_cycle/timestep;//0;//3125
   params.writeOut = 100000;
-  params.nRK = 6; // explicit:1 || 4 // implicit: 3 || 6
-  params.columnL = params.nvar*params.nelem;
-  //params.jacob  = L/params.nelem/2;
-  params.sub_ite = max_subite;//50;
-  params.tol = tolerance;//-4.0;
+  //params.nRK = nRK;//6; // explicit:1 || 4 // implicit: 3 || 6
+  params.sub_ite = 1;
+  params.tol = -4.0;
 
   bool withMagicA = true;
   bool analyticFJ = false;
+
+
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-dt") == 0 ) params.dt = atof(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-porder") == 0 ) params.porder = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-endTime") == 0 ) params.maxIte = round(atof(argv[i+1])/params.dt); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-DIRK") == 0 ) withMagicA = true; }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-exp") == 0 ) withMagicA = false; }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-nRK") == 0 ) params.nRK = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-maxSubIte") == 0 ) params.sub_ite = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-tol") == 0 ) params.tol = atof(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-writeOut") == 0 ) params.writeOut = atoi(argv[i+1]); }
+
+
+
+  params.ndim   = 2;
+  params.nvar   = 4;
+  params.nse    = pow(params.porder+1,2);
+  params.nfe    = 4*(params.porder+1); //only for quad
+  params.nelem  = params.nelem_x*params.nelem_y;
+  params.columnL = params.nvar*params.nelem;
+  params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
+
+
+  L_x = params.x_R - params.x_L;
+  L_y = params.y_T - params.y_B;
+  params.j_x = L_x/params.nelem_x/2.0;
+  params.j_y = L_y/params.nelem_y/2.0;
+  params.jacob = params.j_x*params.j_y;
+
+
+  std::cout << "ndim: " << params.ndim << "\n";
+  std::cout << "polynomial order is: " << params.porder << "\n";
+  std::cout << "number of solution points per element: " << params.nse << "\n";
+  std::cout << "number of face points per element: " << params.nfe << "\n";
+  std::cout << "nvar: " << params.nvar << "\n";
+  std::cout << "max ite: " << params.maxIte << "\n";
+  std::cout << "nelem: " << params.nelem << "\n";
+  std::cout << "columnL: " << params.columnL << "\n";
+  std::cout << "dx: " << L_x/params.nelem_x << "\n";
+  std::cout << "dy: " << L_y/params.nelem_y << "\n";
+  std::cout << "Lenght: " << L_x << " " << L_y << "\n";
+  std::cout << "jacob: " << params.jacob << "\n";
+  std::cout << "jacob x: " << params.j_x << "\n";
+  std::cout << "jacob y: " << params.j_y << "\n";
+  std::cout << "dt: " << params.dt << "\n";
+  std::cout << "end time: " << params.maxIte*params.dt << "\n";
+  std::cout << "max newton sub_ite: " << params.sub_ite << "\n";
+  std::cout << "newton cut off tolerance: " << params.tol << "\n";
+  std::cout << "RK stage: " << params.nRK << std::endl;
 
   //create mesh!
   //no need for a mesh
@@ -175,6 +209,10 @@ int main(int argc, char** argv)
   // perturbed_u array
   double *perturbed_u;
   perturbed_u = new double [params.nse*params.columnL];
+
+  // true u
+  double *true_u;
+  true_u = new double [params.nse*params.columnL];
 
   //visc only arrays;
   double *q_x, *q_y, *q_x_face, *q_y_face;
@@ -227,26 +265,6 @@ int main(int argc, char** argv)
   ks = new double*[params.nRK];
   for ( int i = 0; i < params.nRK; i++ )
     ks[i] = new double [params.nse*params.columnL];
-
-  std::cout << "ndim: " << params.ndim << "\n";
-  std::cout << "polynomial order is: " << params.porder << "\n";
-  std::cout << "number of solution points per element: " << params.nse << "\n";
-  std::cout << "number of face points per element: " << params.nfe << "\n";
-  std::cout << "nvar: " << params.nvar << "\n";
-  std::cout << "max ite: " << params.maxIte << "\n";
-  std::cout << "nelem: " << params.nelem << "\n";
-  std::cout << "columnL: " << params.columnL << "\n";
-  std::cout << "dx: " << L_x/params.nelem_x << "\n";
-  std::cout << "dy: " << L_y/params.nelem_y << "\n";
-  std::cout << "Lenght: " << L_x << " " << L_y << "\n";
-  std::cout << "jacob: " << params.jacob << "\n";
-  std::cout << "jacob x: " << params.j_x << "\n";
-  std::cout << "jacob y: " << params.j_y << "\n";
-  std::cout << "dt: " << params.dt << "\n";
-  std::cout << "end time: " << params.maxIte*params.dt << "\n";
-  std::cout << "max newton sub_ite: " << params.sub_ite << "\n";
-  std::cout << "newton cut off tolerance: " << params.tol << "\n";
-  std::cout << "RK stage: " << params.nRK << std::endl;
 
   double *alpha;
   alpha = new double [params.nRK];
@@ -314,7 +332,7 @@ int main(int argc, char** argv)
   {
     for ( int j = 0; j < params.nRK; j++ )
     {
-      std::cout << butcher_a[i*params.nRK+j] << " ";
+      std::cout << std::setw(9) << std::fixed << std::setprecision(6) << butcher_a[i*params.nRK+j] << " ";
     }
     std::cout << "\n";
   }
@@ -395,7 +413,7 @@ int main(int argc, char** argv)
     double p_c = 100000;
     double T_w = 300;
     double c_p = 1005;
-    double u_w = 69.445;  // these values vorrespond to a Mach=0.2, Re=200;
+    double u_w = 69.445;  // these values correspond to Mach=0.2, Re=200;
 
     double rho, u_vel, v_vel, p, x, y, phi;
     //double x_L =-10, x_R = 10, y_B =-10, y_T = 10;
@@ -475,7 +493,7 @@ int main(int argc, char** argv)
     }
   }
 
-  std::cout << "conversation(rho): " << CONSERVATION << "\n";
+  std::cout << "conservation(rho): " << CONSERVATION << "\n";
 
   double ress, conservation;
   double res[4] = {0};
@@ -490,7 +508,7 @@ int main(int argc, char** argv)
   // MAIN LOOP
   for ( int ite = 0; ite < params.maxIte; ite++ )
   {
-    std::cout << " ite: " << ite << "\n";
+    std::cout << " ite: " << ite << "  dt:" << ite*params.dt << "\n";
     for ( int i = 0; i < params.nse*params.columnL; i++ ) old_u[i] = u[i];
     for ( int i_RK = 0; i_RK < params.nRK; i_RK++ ) {
       for ( int i = 0; i < params.nse*params.columnL; i++ ) ks[i_RK][i] = 0;
@@ -512,7 +530,7 @@ int main(int argc, char** argv)
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
 for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
-      store_nsubite[ite*params.nRK+i_RK] = sub_ite;
+      store_nsubite[ite*params.nRK+i_RK] = sub_ite+1;
       if ( ress < params.tol ) continue;
       ress = 0; // if residual small enough exit sub ite loop
       res[0] = 0; res[1] = 0; res[2] = 0; res[3] = 0;
@@ -560,9 +578,9 @@ if (!analyticFJ) {
       for ( int i = 0; i < params.nelem*params.nvar*params.nse*params.nvar*params.nse; i++ ) 
         JACOB[i] = 0;
       // perturb all the values like a checkerboard
-      for ( int sol_i = 0; sol_i < params.nse; sol_i++ )
+      for ( int sol_i = 0; sol_i < params.nse; sol_i++ ) // each solution point within an element
       {
-        for ( int var_i = 0; var_i < params.nvar; var_i++ )
+        for ( int var_i = 0; var_i < params.nvar; var_i++ ) // each variable located at a solution point
         {
           double eps = 0.000001;
           int n_colors = 5;
@@ -618,12 +636,11 @@ if (!analyticFJ) {
                   {
                     // j and k is for row loc;
                     // sol_i, var_i is for column loc;
-                    int row_loc, col_loc;
-                    row_loc = j*params.nvar+k;
-                    col_loc = sol_i*params.nvar+var_i;
+                    int row_loc = j*params.nvar+k;
+                    int col_loc = sol_i*params.nvar+var_i;
                     JACOB[ i_elem*params.nvar*params.nse*params.nvar*params.nse
                          + row_loc*params.nvar*params.nse + col_loc ] 
-                                        += ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
+                                         = ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
                                            - u[j*params.columnL+k*params.nelem+i_elem] )/eps;
                   }
                 }
@@ -661,7 +678,7 @@ if (analyticFJ) {
           // F_L, F_R, G_B, G_T respectively;
           // F_L;
           int face_i;
-          face_i = (params.porder+1)*(params.porder+1)-1-j; // left
+          face_i = 4*(params.porder+1)-1-j; // left !!! solved a fucking bug here, was p+1 instead of 4
           F_flux_jacob( &params, i_elem, F_I_LR, 0, params.nvar*2, u_face, face_i );
           correct_Flux( &params, i_elem, F_I_LR, 0, params.nvar*2, u_hat_face, face_i, 1, 0 );
           // F_R;
@@ -766,7 +783,7 @@ else { // numeric jacob
           if ( magicA[j] != 0 ) val = 8;
           else val = 0;
           if ( magicA[j] != magicA[j] ) val = 666666;
-          fmagicA << std::scientific << magicA[j] << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+          fmagicA << std::setw(13) << std::scientific << magicA[j] << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
           if ( (j+1)%(params.nse*params.nvar*params.nvar) == 0 ) fmagicA << "\n";
           //fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
         }
@@ -934,24 +951,78 @@ std::cout << old_u[0*params.columnL+2*params.nelem+0]/old_u[0*params.columnL+0*p
     }
 
 
-    if ( ite%params.writeOut == 0 ) writeSolution(&params, u, ite);
+    if ( ite%params.writeOut == 0 ) writeSolution(&params, u, ite, soln_coords);
   } // time iteration
 
-  jumptowrite: writeSolution(&params, u, params.maxIte);
+  jumptowrite: writeSolution(&params, u, params.maxIte, soln_coords);
+  double q_hold[4];
+
+
+  char name[50];
+  sprintf(name, "solution_50x50p%d_c0.1.csv", params.porder);
+  std::ifstream file (name);
+  std::string value;
+  int count=0;
+  double error = 0;
+  while ( file.good() )
+  {
+    getline ( file, value, ',' ); //ignore the x coord
+    getline ( file, value, ',' ); //ignore the y coord
+    getline ( file, value, ',' ); //ignore the z coord
+    if ( !file.good() ) continue;
+    getline ( file, value, ',' );
+    //std::cout << value << ", ";
+    q_hold[0] = stod(value);
+    getline ( file, value, ',' );
+    //std::cout << value << ", ";
+    q_hold[1] = stod(value);
+    getline ( file, value, ',' );
+    //std::cout << value << ", ";
+    q_hold[2] = stod(value);
+    getline ( file, value, '\n' );
+    //std::cout << value << "\n";
+    q_hold[3] = stod(value);
+
+    int n_x, n_y, m, n;
+    n_y = count/(params.nelem_x*params.nse);
+    //n_x = (count%(params.nelem_x*params.nse))/params.nse;
+    n_x = ((count%(params.nelem_x*params.nse))%(params.nelem_x*(params.porder+1)))/(params.porder+1);
+    m = ((count%(params.nelem_x*params.nse))%(params.nelem_x*(params.porder+1)))%(params.porder+1);
+    n = (count%(params.nelem_x*params.nse))/(params.nelem_x*(params.porder+1));
+
+
+    for ( int k = 0; k < params.nvar; k++ )
+      error += pow(u[(n*(params.porder+1)+m)*params.columnL+(n_y*params.nelem_x+n_x)+params.nelem*k] - q_hold[k],2);
+
+    count += 1;
+
+//std::cout << "count " << count << " n_x " << n_x << " n_y " << n_y << " m " << m << " n " << n << "\n";
+//std::cout << std::scientific << q_hold[0] << ", " << q_hold[1] << ", " << q_hold[2] << ", " << q_hold[3] << "\n";
+  }
+  std::cout << "error = " << error << "\n";
+  error = log10(sqrt(error)/sqrt(params.nelem*params.nse));
+
+
+  int numberofnewtonite=0;
+  for ( int i = 0; i < params.maxIte*params.nRK; i++ )
+  {
+    //std::cout << store_nsubite[i] << "\n";
+    numberofnewtonite += store_nsubite[i];
+  }
 
   std::cout << "RESULTS===---;\n";
   std::cout << "subite numbers: " << params.maxIte*params.nRK << "\n";
-  for ( int i = 0; i < params.maxIte*params.nRK; i++ )
-  {
-    std::cout << store_nsubite[i] << "\n";
-  }
-
+  std::cout << "total_number_of_newton_ite: " << numberofnewtonite << "\n";
   std::cout << "p_order: " << params.porder << "\n";
   std::cout << "timestep: " << params.dt << "\n";
   std::cout << "tolerance: " << params.tol << "\n";
   std::cout << "numberOfIte: " << params.maxIte << "\n";
+  std::cout << "end Time: " << params.dt*params.maxIte << "\n";
   std::cout << "max subite: " << params.sub_ite << "\n";
-
+  std::cout << "error: " << error << "\n";
+  std::cout << params.maxIte*params.nRK << " " << numberofnewtonite << " " << params.porder << " " 
+            << params.dt << " " << params.tol << " " << params.maxIte << " "
+            << params.sub_ite << " " << std::fixed << error << "\n";
 
 
   // true error for the euler vortex case (viscous euler????????)
@@ -1070,8 +1141,8 @@ void deriveGiven( essential *params,
     }
     for ( int j = 0; j < params->nse; j++ )
     {
-      pd_X_ksi[j*params->columnL+i_elem] += dummy_x[j]/params->jacob;
-      pd_Y_eta[j*params->columnL+i_elem] += dummy_y[j]/params->jacob;
+      pd_X_ksi[j*params->columnL+i_elem] += dummy_x[j]/params->j_x;
+      pd_Y_eta[j*params->columnL+i_elem] += dummy_y[j]/params->j_y;
     }
   }
 
@@ -1183,7 +1254,7 @@ void getInterFlux( essential* params,
             pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
             pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
           }
-          roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
+          rusanov_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
           //left side
           nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
           //right side
@@ -1229,7 +1300,7 @@ void getInterFlux( essential* params,
             pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
             pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
           }
-          roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+          rusanov_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
           //left side
           nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
           //right side
@@ -1287,7 +1358,7 @@ if ( true ) // periodic left and right
         pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
         pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
       }
-      roe_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
+      rusanov_flux(u_L, u_R, 1.0, 0.0, f_I, u_hat);
       //left side
       nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only fv_L
       //right side
@@ -1333,7 +1404,7 @@ if ( true ) // periodic top and bottom
         pd_U_y_L[j] = q_y_face[pairL[i]*params->columnL + loc_q[j]];
         pd_U_y_R[j] = q_y_face[pairR[i]*params->columnL + loc_q[j]+next_elem];
       }
-      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+      rusanov_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
       //left side
       nodeViscFlux(u_L, pd_U_x_L, pd_U_y_L, params->mu, params->Pr, fv_L, gv_L); // use only gv_L
       //right side
@@ -1384,7 +1455,7 @@ if ( false ) { //couette
       u_L[2] = u_R[0]*2.0*v_w - u_R[2];
       u_L[3] = u_R[0]*( RT/(gammaVal-1.0) + ( pow(2.0*u_w-u_R[1]/u_R[0],2)
                                             + pow(2.0*v_w-u_R[2]/u_R[0],2) )*0.5 );
-      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+      rusanov_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
 
       // set u_L for viscous BC
       u_L[0] = u_R[0];
@@ -1432,7 +1503,7 @@ if ( false ) { //couette
       u_R[2] = u_L[0]*2.0*v_w - u_L[2];
       u_R[3] = u_L[0]*( RT/(gammaVal-1.0) + ( pow(2.0*u_w-u_L[1]/u_L[0],2)
                                             + pow(2.0*v_w-u_L[2]/u_L[0],2) )*0.5 );
-      roe_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
+      rusanov_flux(u_L, u_R, 0.0, 1.0, f_I, u_hat);
 
       // set u_R for viscous BC
       u_R[0] = u_L[0];
@@ -1760,7 +1831,50 @@ if ( false ) { //couette
 }
 
 
+void rusanov_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat)
+{
 
+  double rho_L, u_L, v_L, E_L, p_L, c_L, H_L;
+  rho_L = q_L[0];
+  u_L = q_L[1]/q_L[0];
+  v_L = q_L[2]/q_L[0];
+  E_L = q_L[3];
+  p_L = (gammaVal-1)*(E_L-0.5*rho_L*(u_L*u_L+v_L*v_L));
+  c_L = sqrt(gammaVal*p_L/rho_L);
+  H_L = (p_L+E_L)/rho_L;
+
+  double rho_R, u_R, v_R, E_R, p_R, c_R, H_R;
+  rho_R = q_R[0];
+  u_R = q_R[1]/q_R[0];
+  v_R = q_R[2]/q_R[0];
+  E_R = q_R[3];
+  p_R = (gammaVal-1)*(E_R-0.5*rho_R*(u_R*u_R+v_R*v_R));
+  c_R = sqrt(gammaVal*p_R/rho_R);
+  H_R = (p_R+E_R)/rho_R;
+
+
+  double s;
+  s = sqrt(gammaVal*(p_L+p_R)/(rho_L+rho_R))+0.5*std::abs(n_x*(u_L+u_R)+n_y*(v_L+v_R));
+
+  double flux_L[4], flux_R[4];
+  flux_L[0] = q_L[1]*n_x + q_L[2]*n_y;
+  flux_L[1] = (q_L[1]*n_x + q_L[2]*n_y)*q_L[1]/q_L[0] + p_L*n_x;
+  flux_L[2] = (q_L[1]*n_x + q_L[2]*n_y)*q_L[2]/q_L[0] + p_L*n_y;
+  flux_L[3] = (q_L[1]*n_x + q_L[2]*n_y)*H_L;
+  flux_R[0] = q_R[1]*n_x + q_R[2]*n_y;
+  flux_R[1] = (q_R[1]*n_x + q_R[2]*n_y)*q_R[1]/q_R[0] + p_R*n_x;
+  flux_R[2] = (q_R[1]*n_x + q_R[2]*n_y)*q_R[2]/q_R[0] + p_R*n_y;
+  flux_R[3] = (q_R[1]*n_x + q_R[2]*n_y)*H_R;
+
+  for ( int i = 0; i < 4; i++ ) fluxI[i] = 0.5*(flux_L[i] + flux_R[i] - s*(q_R[i]-q_L[i]));
+
+  q_hat[0] = s;
+  q_hat[1] = s;
+  q_hat[2] = s;
+  q_hat[3] = s;
+
+  return;
+}
 
 void roe_flux(double *q_L, double *q_R, double n_x, double n_y, double *fluxI, double *q_hat)
 {
@@ -2137,7 +2251,7 @@ void G_flux_jacob( essential *params, int i_elem, double *jacob, int i_start, in
 }
 
 
-void writeSolution(essential *params, double *u, int iter)
+void writeSolution(essential *params, double *u, int iter, double *soln_coords)
 {
 
   std::ofstream solution;
@@ -2148,6 +2262,7 @@ void writeSolution(essential *params, double *u, int iter)
   double dx = (params->x_R-params->x_L)/params->nelem_x, dy = (params->y_T-params->y_B)/params->nelem_y;
   double avg_u[4];
   int i_elem;
+/*
   for ( int i = 0; i < params->nelem_x; i++ )
   {
     for ( int j = 0; j < params->nelem_y; j++ )
@@ -2166,6 +2281,26 @@ void writeSolution(essential *params, double *u, int iter)
       solution << x << ", " << y;
       for ( int k = 0; k < params->nvar; k++ ) solution << ", "  << avg_u[k]/params->nse;
       solution << "\n";
+    }
+  }
+*/
+
+  for ( int j = 0; j < params->nelem_y; j++ )
+  {
+    for ( int m = 0; m < params->porder+1; m++)
+    {
+      for ( int i = 0; i < params->nelem_x; i++ )
+      {
+        i_elem = j*params->nelem_x+i;
+        for ( int n = 0; n < params->porder+1; n++)
+        {
+          x = params->x_L + i*dx + dx/2.0 + soln_coords[n]*params->j_x;
+          y = params->y_B + j*dy + dy/2.0 + soln_coords[m]*params->j_y;
+          solution << std::scientific << std::setprecision(15) << x << ", " << y << ", 0";// 0 is the z coordinate
+          for ( int k = 0; k < params->nvar; k++ ) solution << ", " << u[(m*(params->porder+1)+n)*params->columnL+i_elem+k*params->nelem];
+          solution << "\n";
+        }
+      }
     }
   }
 
@@ -2210,6 +2345,19 @@ void set_solnPoints(int p, double **soln_coords, double **weights)
     (*weights)[1] = 0.652145154862546142626936050778;
     (*weights)[2] = 0.652145154862546142626936050778;
     (*weights)[3] = 0.347854845137453857373063949222;
+  }
+  else if ( p == 4 )
+  {
+    (*soln_coords)[0] =-0.906179845938663992797626878299;
+    (*soln_coords)[1] =-0.5384693101056830910363144207;
+    (*soln_coords)[2] = 0.0;
+    (*soln_coords)[3] = 0.5384693101056830910363144207;
+    (*soln_coords)[4] = 0.906179845938663992797626878299;
+    (*weights)[0] = 0.23692688505618908751426404072;
+    (*weights)[1] = 0.478628670499366468041291514836;
+    (*weights)[2] = 0.568888888888888888888888888889;
+    (*weights)[3] = 0.478628670499366468041291514836;
+    (*weights)[4] = 0.23692688505618908751426404072;
   }
 
   std::cout << "solution points are: \n";
@@ -2282,6 +2430,12 @@ void set_correctionDerivs(int p, double *soln_coords, double **hL, double **hR)
   {
     for ( int i = 0; i < p+1; i++ ) 
       (*hL)[i] = 0.125*(70*pow(soln_coords[i],3)-30*pow(soln_coords[i],2)-30*soln_coords[i]+6);
+  }
+  else if ( p == 4 )
+  {
+    for ( int i = 0; i < p+1; i++ ) 
+      (*hL)[i] =-19.6875*pow(soln_coords[i],4) + 8.75*pow(soln_coords[i],3) 
+               + 13.125*pow(soln_coords[i],2) - 3.75*soln_coords[i] - 0.9375;
   }
 
   // uncomment below to set all 0.5 and -..
