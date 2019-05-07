@@ -29,7 +29,7 @@
 
 struct essential {
   double dt, jacob, j_x, j_y, mu, Pr, beta, tau, ndim, tol;
-  int nvar, p_x, p_y, porder, nnode, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite, writeOut;
+  int nvar, p_x, p_y, porder, nelem, nelem_x, nelem_y, columnL, maxIte, nRK, nse, nfe, sub_ite, writeOut;
   double x_L, x_R, y_B, y_T;
 } ;
 
@@ -80,8 +80,6 @@ int main(int argc, char** argv)
 
   essential params;
   double L_x, L_y;
-  //int nelem_x, nelem_y, nnode;
-  //double J_x, J_y, Jacob;
 
   params.beta = 0.5;
   params.tau = 0.1;
@@ -112,20 +110,32 @@ int main(int argc, char** argv)
   params.sub_ite = 1;
   params.tol = -4.0;
 
-  bool withMagicA = true;
+  bool withMagicA = false;
   bool analyticFJ = false;
 
+  bool p0_acc = true;
 
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-dt") == 0 ) params.dt = atof(argv[i+1]); }
   for ( int i = 0; i < argc; i++ ) 
   { if ( strcmp(argv[i], "-porder") == 0 ) { params.porder = atoi(argv[i+1]);
-                                             params.p_x = atoi(argv[i+1]);
-                                             params.p_y = atoi(argv[i+1]); } }
+                                             params.p_x = params.porder;
+                                             params.p_y = params.porder; } }
   for ( int i = 0; i < argc; i++ ) 
-  { if ( strcmp(argv[i], "-p_x") == 0 ) { params.p_x = atoi(argv[i+1]); } }
+  { if ( strcmp(argv[i], "-p_x") == 0 ) params.p_x = atoi(argv[i+1]); }
   for ( int i = 0; i < argc; i++ ) 
-  { if ( strcmp(argv[i], "-p_y") == 0 ) { params.p_y = atoi(argv[i+1]); } }
+  { if ( strcmp(argv[i], "-p_y") == 0 ) params.p_y = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-nelem") == 0 ) { params.nelem_x = atoi(argv[i+1]);
+                                            params.nelem_y = params.nelem_x; } }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-nelem_x") == 0 ) params.nelem_x = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-nelem_y") == 0 ) params.nelem_y = atoi(argv[i+1]); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-DOF_x") == 0 ) params.nelem_x = atoi(argv[i+1])/params.p_x; }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-DOF_y") == 0 ) params.nelem_y = atoi(argv[i+1])/params.p_y; }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-endTime") == 0 ) params.maxIte = round(atof(argv[i+1])/params.dt); }
   for ( int i = 0; i < argc; i++ )
@@ -149,7 +159,6 @@ int main(int argc, char** argv)
   params.nfe    = 2*(params.p_x+1+params.p_y+1);//4*(params.porder+1); //only for quad
   params.nelem  = params.nelem_x*params.nelem_y;
   params.columnL = params.nvar*params.nelem;
-  params.nnode = (params.nelem_x+1)*(params.nelem_y+1);
 
 
   L_x = params.x_R - params.x_L;
@@ -220,10 +229,6 @@ int main(int argc, char** argv)
   double *perturbed_u;
   perturbed_u = new double [params.nse*params.columnL];
 
-  // true u
-  double *true_u;
-  true_u = new double [params.nse*params.columnL];
-
   //visc only arrays;
   double *q_x, *q_y, *q_x_face, *q_y_face;
   q_x = new double [params.nse*params.columnL];
@@ -235,6 +240,78 @@ int main(int argc, char** argv)
   { u[i] = 0; f[i] = 0; g[i] = 0; q_x[i] = 0; q_y[i] = 0; }
   for ( int i = 0; i < params.nfe*params.columnL; i++ )
   { u_face[i] = 0; f_face[i] = 0; q_x_face[i] = 0; q_y_face[i] = 0; }
+
+  double *delta_u;
+  delta_u = new double [params.nse*params.columnL];
+
+
+
+// FOR p0 
+  // solution arrays, array of structures
+  double *u0, *f0, *g0, *u0_face, *f0_face;
+  u0 = new double [params.columnL];
+  f0 = new double [params.columnL];
+  g0 = new double [params.columnL];
+  u0_face = new double [4*params.columnL];
+  f0_face = new double [4*params.columnL];
+
+  double *u0_curr;
+  u0_curr = new double [params.nse*params.columnL];
+
+  // perturbed_u array
+  double *perturbed_u0;
+  perturbed_u0 = new double [params.columnL];
+
+  //visc only arrays;
+  double *q0_x, *q0_y, *q0_x_face, *q0_y_face;
+  q0_x = new double [params.columnL];
+  q0_y = new double [params.columnL];
+  q0_x_face = new double [4*params.columnL];
+  q0_y_face = new double [4*params.columnL];
+
+  for ( int i = 0; i < params.columnL; i++ )
+  { u0[i] = 0; f0[i] = 0; g0[i] = 0; q0_x[i] = 0; q0_y[i] = 0; }
+  for ( int i = 0; i < 4*params.columnL; i++ )
+  { u0_face[i] = 0; f0_face[i] = 0; q0_x_face[i] = 0; q0_y_face[i] = 0; }
+
+  double *JACOB0;
+  int p0nnz = 5;
+  JACOB0 = new double [params.nvar*p0nnz*params.nvar*params.nelem];
+
+  int *jacob_elems;
+  jacob_elems = new int [p0nnz*params.nelem];
+  for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
+  {
+    for ( int i_x = 0; i_x < params.nelem_x; i_x++ )
+    {
+      int elem_loc = i_y*params.nelem_x+i_x;
+      jacob_elems[elem_loc*p0nnz+0] = i_y*params.nelem_x+i_x;
+      jacob_elems[elem_loc*p0nnz+1] = i_y*params.nelem_x+(i_x+1)%params.nelem_x;   //right______
+      jacob_elems[elem_loc*p0nnz+2] = ((i_y+1)%params.nelem_y)*params.nelem_x+i_x; //top  |_|2|_|
+      jacob_elems[elem_loc*p0nnz+3] = i_y*params.nelem_x+(i_x-1)%params.nelem_x;   //left |3_0_1|
+      jacob_elems[elem_loc*p0nnz+4] = ((i_y-1)%params.nelem_y)*params.nelem_x+i_x; //top  |_|4|_|
+    }
+  }
+
+
+  double *ptr_zero = new double [1]; ptr_zero[0] = 0;
+  double *ptr_one = new double [1]; ptr_one[0] = 1;
+  double *ptr_hL = new double [1]; ptr_hL[0] =-0.5;
+  double *ptr_hR = new double [1]; ptr_hR[0] = 0.5;
+
+  essential params0;
+  params0.nvar = 4;
+  params0.nelem_x = params.nelem_x;
+  params0.nelem_y = params.nelem_y;
+  params0.nelem = params0.nelem_x*params0.nelem_y;
+  params0.p_x = 0; params0.p_y = 0;
+  params0.nse = 1; params0.nfe = 4;
+  params0.beta = params.beta; params0.tau = params.tau; params0.Pr = params.Pr; params0.mu = params.mu;
+  params0.j_x = params.j_x; params0.j_y = params.j_y;
+  params0.columnL = params0.nvar*params0.nelem;
+
+
+
 
   double *u_hat_face;
   u_hat_face = new double [params.nfe*params.columnL];
@@ -535,6 +612,7 @@ int main(int argc, char** argv)
         {
           u[j] += butcher_a[i_RK*params.nRK+k]*ks[k][j]*params.dt;
         }
+        if ( p0_acc ) delta_u[j] = 0; // zeroize the newton corrector array;
       }
 
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
@@ -594,7 +672,7 @@ if (!analyticFJ) {
         {
           double eps = 0.000001;
           int n_colors = 5;
-          for ( int i = 0; i < n_colors; i++ ) //the color loop, its 5 for a structured mesh
+          for ( int i = 0; i < n_colors; i++ ) //the color loop, its 5 for a regular mesh
           {
             for ( int j = 0; j < params.nse*params.columnL; j++ ) perturbed_u[j] = u_curr[j];
             for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
@@ -659,6 +737,118 @@ if (!analyticFJ) {
           } // the color loop
         }
       }
+
+if ( p0_acc ) {
+
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        u0[j] = 0;
+        for ( int k = 0; k < params.nse; k++ ) u0[j] += u_curr[k*params.columnL+j];
+        u0[j] /= params.nse;
+      }
+      extrapToFace(&params0, u0, u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+      // then corrected u_face with the common u_I
+      getCommonU(&params0, u0_face);
+      // know we can get the q_x and q_y
+      deriveGiven(&params0, q0_x, q0_y, u0, u0, u0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
+      // get u_face back
+      extrapToFace(&params0, u0, u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+      // get q_x_face adn q_y_face
+      extrapToFace(&params0, q0_x, q0_x, q0_x_face, ptr_one, ptr_one, ptr_one, ptr_one);
+      extrapToFace(&params0, q0_y, q0_y, q0_y_face, ptr_one, ptr_one, ptr_one, ptr_one);
+      // get flux
+      getFlux(&params0, u0, q0_x, q0_y, f0, g0);
+      // get f_face
+      extrapToFace(&params0, f0, g0, f0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+      // get interface flux (both inviscid and viscous within the same func)
+      getInterFlux(&params0, f0_face, u0_face, q0_x_face, q0_y_face, u_hat_face);
+      // get the final result
+       for ( int j = 0; j < params0.nse*params0.columnL; j++ ) u0_curr[j] = u0[j];
+      deriveGiven(&params0, u0, u0, f0, g0, f0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
+
+
+      // p0 perturbation
+      for ( int var_i = 0; var_i < params0.nvar; var_i++ ) // each variable located at a solution point
+      {
+        double eps = 0.000001;
+        int n_colors = 10;
+        for ( int i = 0; i < n_colors; i++ ) //the color loop, its 5 for a regular mesh
+        {
+          for ( int j = 0; j < params.columnL; j++ ) perturbed_u0[j] = u0_curr[j];
+          for ( int i_y = 0; i_y < params0.nelem_y; i_y++ )
+          {
+            int i_start = i+(i_y%n_colors)*3; // one layer up, three to the right
+            while ( i_start >= n_colors ) i_start -= n_colors;
+            for ( int i_x = i_start; i_x < params0.nelem_x; i_x += n_colors )
+            {
+              int i_elem = i_y*params0.nelem_x+i_x;
+              perturbed_u0[var_i*params0.nelem+i_elem] += eps;
+            }
+          }
+          // call the residual with perturbed u vector
+          // we need u_face first
+          extrapToFace(&params0, perturbed_u0, perturbed_u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+          // then corrected u_face with the common u_I
+          getCommonU(&params0, u0_face);
+          // know we can get the q_x and q_y
+          deriveGiven(&params0, q0_x, q0_y, perturbed_u0, perturbed_u0, u0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
+          // get u_face back
+          extrapToFace(&params0, perturbed_u0, perturbed_u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+          // get q_x_face adn q_y_face
+          extrapToFace(&params0, q0_x, q0_x, q0_x_face, ptr_one, ptr_one, ptr_one, ptr_one);
+          extrapToFace(&params0, q0_y, q0_y, q0_y_face, ptr_one, ptr_one, ptr_one, ptr_one);
+          // get flux
+          getFlux(&params0, perturbed_u0, q0_x, q0_y, f0, g0);
+          // get f_face
+          extrapToFace(&params0, f0, g0, f0_face, ptr_one, ptr_one, ptr_one, ptr_one);
+          // get interface flux (both inviscid and viscous within the same func)
+          getInterFlux(&params0, f0_face, u0_face, q0_x_face, q0_y_face, u_hat_face);
+          // get the final result
+          deriveGiven(&params0, perturbed_u0, perturbed_u0, f0, g0, f0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
+
+
+          for ( int i_y = 0; i_y < params0.nelem_y; i_y++ )
+          {
+            int i_start = i+(i_y%n_colors)*3;
+            while ( i_start >= n_colors ) i_start -= n_colors;
+            for ( int i_x = i_start; i_x < params0.nelem_x; i_x += n_colors )
+            {
+              int i_elem = i_y*params0.nelem_x+i_x;
+              int elem_p;
+              // finite difference
+              for ( int j = 0; j < p0nnz; j++ ) //the 4 neighbours and itself, p0nnz===5
+              {
+                elem_p = jacob_elems[i_elem*p0nnz+j];
+                for ( int k = 0; k < params0.nvar; k++ )
+                {
+                  // j and k is for row loc;
+                  // sol_i, var_i is for column loc;
+                  int row_loc = k;
+                  int col_loc = j*params0.nvar+var_i;
+                  JACOB0[ i_elem*params0.nvar*p0nnz*params0.nvar
+                        + row_loc*params0.nvar*p0nnz + col_loc ] 
+                                       = ( perturbed_u0[k*params0.nelem+elem_p]
+                                         - u0[k*params0.nelem+elem_p] )/eps;
+                }
+              }
+            }
+          }
+        } // the second color loop
+      }
+
+
+      // DIRK
+      for ( int j = 0; j < params0.nelem*params0.nvar*p0nnz*params0.nvar; j++ )
+      {
+        JACOB0[j] *= params.dt*butcher_a[i_RK*params.nRK+i_RK];
+      }
+
+      for ( int j = 0; j < params0.nelem*params0.nvar; j++ )
+      {
+        JACOB0[j*params0.nvar*p0nnz+j] += 1;//.0/params.dt;
+      }
+} //p0_acc 
+
 }
       // for each element, create a local matrix, and update the solution by solving resulting linear system
       for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
@@ -818,6 +1008,23 @@ else { // numeric jacob
                                  // *( u_curr[k*params.columnL+i_elem+j*params.nelem]
                                  //  - old_u[k*params.columnL+i_elem+j*params.nelem] );
 
+            if ( p0_acc ) {
+              // update rhs with the p0 jacob, JACOB0
+              for ( int l = 1; l < p0nnz; l++ ) //skip the contribution from element itself
+              {
+                int elem_loc = jacob_elems[i_elem*p0nnz+l];
+                //for ( int m = 0; m < params.nvar; m++ )
+                //{
+                  for ( int n = 0; n < params.nvar; n++ )
+                  {
+                    int jacob_loc = i_elem*params.nvar*p0nnz*params.nvar+l*params.nvar;
+                    rhs[k*params.nvar+j] -= JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
+                                           *delta_u[k*params.columnL+elem_loc+n*params.nelem];
+                  }
+                //}
+              }
+            }
+
             //if ( j == 0 ) 
             //ress += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
             res[j] += rhs[k*params.nvar+j]*rhs[k*params.nvar+j];
@@ -849,6 +1056,8 @@ else { // numeric jacob
 
             //DIRK
             ks[i_RK][k*params.columnL+i_elem+j*params.nelem] += rhs[k*params.nvar+j];
+
+            if ( p0_acc ) delta_u[k*params.columnL+i_elem+j*params.nelem] = rhs[k*params.nvar+j];
 
             u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem];
             for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
@@ -1000,6 +1209,7 @@ else { // numeric jacob
   std::cout << "subite numbers: " << params.maxIte*params.nRK << "\n";
   std::cout << "total_number_of_newton_ite: " << numberofnewtonite << "\n";
   std::cout << "p_order: " << params.p_x << " " << params.p_y << "\n";
+  std::cout << "nelem: " << params.nelem_x << " " << params.nelem_y << "\n";
   std::cout << "timestep: " << params.dt << "\n";
   std::cout << "tolerance: " << params.tol << "\n";
   std::cout << "numberOfIte: " << params.maxIte << "\n";
