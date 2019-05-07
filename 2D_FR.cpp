@@ -241,9 +241,9 @@ int main(int argc, char** argv)
   for ( int i = 0; i < params.nfe*params.columnL; i++ )
   { u_face[i] = 0; f_face[i] = 0; q_x_face[i] = 0; q_y_face[i] = 0; }
 
-  double *delta_u;
+  double *delta_u, *old_delta_u;
   delta_u = new double [params.nse*params.columnL];
-
+  old_delta_u = new double [params.nse*params.columnL];
 
 
 // FOR p0 
@@ -612,7 +612,7 @@ int main(int argc, char** argv)
         {
           u[j] += butcher_a[i_RK*params.nRK+k]*ks[k][j]*params.dt;
         }
-        if ( p0_acc ) delta_u[j] = 0; // zeroize the newton corrector array;
+        if ( p0_acc ) {old_delta_u[j] = 0; delta_u[j] = 0;} // zeroize the newton corrector array;
       }
 
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
@@ -843,13 +843,20 @@ if ( p0_acc ) {
         JACOB0[j] *= params.dt*butcher_a[i_RK*params.nRK+i_RK];
       }
 
-      for ( int j = 0; j < params0.nelem*params0.nvar; j++ )
-      {
-        JACOB0[j*params0.nvar*p0nnz+j] += 1;//.0/params.dt;
-      }
+      //for ( int j = 0; j < params0.nelem*params0.nvar; j++ )
+     // {
+     //   JACOB0[j*params0.nvar*p0nnz+j] += 1;//.0/params.dt;
+     // }
 } //p0_acc 
 
-}
+} // numeric jacob eval
+
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        old_delta_u[j] = delta_u[j];
+      }
+
       // for each element, create a local matrix, and update the solution by solving resulting linear system
       for ( int i_elem = 0; i_elem < params.nelem; i_elem++ )
       { //std::cout << i_elem << "\n";
@@ -1019,7 +1026,7 @@ else { // numeric jacob
                   {
                     int jacob_loc = i_elem*params.nvar*p0nnz*params.nvar+l*params.nvar;
                     rhs[k*params.nvar+j] -= JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
-                                           *delta_u[k*params.columnL+elem_loc+n*params.nelem];
+                                           *old_delta_u[k*params.columnL+elem_loc+n*params.nelem];
                   }
                 //}
               }
