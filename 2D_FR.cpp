@@ -108,16 +108,16 @@ int main(int argc, char** argv)
   params.writeOut = 100000;
   //params.nRK = nRK;//6; // explicit:1 || 4 // implicit: 3 || 6
   params.sub_ite = 1;
-  params.tol = -4.0;
+  params.tol = -8.0;
 
   bool withMagicA = false;
   bool analyticFJ = false;
 
-  bool p0_acc = true;
+  bool p0_acc = false;
 
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-dt") == 0 ) params.dt = atof(argv[i+1]); }
-  for ( int i = 0; i < argc; i++ ) 
+  for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-porder") == 0 ) { params.porder = atoi(argv[i+1]);
                                              params.p_x = params.porder;
                                              params.p_y = params.porder; } }
@@ -133,15 +133,20 @@ int main(int argc, char** argv)
   for ( int i = 0; i < argc; i++ ) 
   { if ( strcmp(argv[i], "-nelem_y") == 0 ) params.nelem_y = atoi(argv[i+1]); }
   for ( int i = 0; i < argc; i++ ) 
-  { if ( strcmp(argv[i], "-DOF_x") == 0 ) params.nelem_x = atoi(argv[i+1])/params.p_x; }
+  { if ( strcmp(argv[i], "-DOF") == 0 ) { params.nelem_x = atoi(argv[i+1])/(params.p_x+1);
+                                          params.nelem_y = atoi(argv[i+1])/(params.p_y+1); } }
   for ( int i = 0; i < argc; i++ ) 
-  { if ( strcmp(argv[i], "-DOF_y") == 0 ) params.nelem_y = atoi(argv[i+1])/params.p_y; }
+  { if ( strcmp(argv[i], "-DOF_x") == 0 ) params.nelem_x = atoi(argv[i+1])/(params.p_x+1); }
+  for ( int i = 0; i < argc; i++ ) 
+  { if ( strcmp(argv[i], "-DOF_y") == 0 ) params.nelem_y = atoi(argv[i+1])/(params.p_y+1); }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-endTime") == 0 ) params.maxIte = round(atof(argv[i+1])/params.dt); }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-DIRK") == 0 ) withMagicA = true; }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-exp") == 0 ) withMagicA = false; }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-p0acc") == 0 ) p0_acc = true; }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-nRK") == 0 ) params.nRK = atoi(argv[i+1]); }
   for ( int i = 0; i < argc; i++ )
@@ -768,21 +773,21 @@ if ( p0_acc ) {
 
 
       // p0 perturbation
-      for ( int var_i = 0; var_i < params0.nvar; var_i++ ) // each variable located at a solution point
+      for ( int var_i = 0; var_i < params.nvar; var_i++ ) // each variable located at a solution point
       {
         double eps = 0.000001;
         int n_colors = 10;
         for ( int i = 0; i < n_colors; i++ ) //the color loop, its 5 for a regular mesh
         {
           for ( int j = 0; j < params.columnL; j++ ) perturbed_u0[j] = u0_curr[j];
-          for ( int i_y = 0; i_y < params0.nelem_y; i_y++ )
+          for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
           {
             int i_start = i+(i_y%n_colors)*3; // one layer up, three to the right
             while ( i_start >= n_colors ) i_start -= n_colors;
-            for ( int i_x = i_start; i_x < params0.nelem_x; i_x += n_colors )
+            for ( int i_x = i_start; i_x < params.nelem_x; i_x += n_colors )
             {
-              int i_elem = i_y*params0.nelem_x+i_x;
-              perturbed_u0[var_i*params0.nelem+i_elem] += eps;
+              int i_elem = i_y*params.nelem_x+i_x;
+              perturbed_u0[var_i*params.nelem+i_elem] += eps;
             }
           }
           // call the residual with perturbed u vector
@@ -807,28 +812,28 @@ if ( p0_acc ) {
           deriveGiven(&params0, perturbed_u0, perturbed_u0, f0, g0, f0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
 
 
-          for ( int i_y = 0; i_y < params0.nelem_y; i_y++ )
+          for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
           {
             int i_start = i+(i_y%n_colors)*3;
             while ( i_start >= n_colors ) i_start -= n_colors;
-            for ( int i_x = i_start; i_x < params0.nelem_x; i_x += n_colors )
+            for ( int i_x = i_start; i_x < params.nelem_x; i_x += n_colors )
             {
-              int i_elem = i_y*params0.nelem_x+i_x;
+              int i_elem = i_y*params.nelem_x+i_x;
               int elem_p;
               // finite difference
               for ( int j = 0; j < p0nnz; j++ ) //the 4 neighbours and itself, p0nnz===5
               {
                 elem_p = jacob_elems[i_elem*p0nnz+j];
-                for ( int k = 0; k < params0.nvar; k++ )
+                for ( int k = 0; k < params.nvar; k++ )
                 {
                   // j and k is for row loc;
                   // sol_i, var_i is for column loc;
                   int row_loc = k;
-                  int col_loc = j*params0.nvar+var_i;
-                  JACOB0[ i_elem*params0.nvar*p0nnz*params0.nvar
-                        + row_loc*params0.nvar*p0nnz + col_loc ] 
-                                       = ( perturbed_u0[k*params0.nelem+elem_p]
-                                         - u0[k*params0.nelem+elem_p] )/eps;
+                  int col_loc = j*params.nvar+var_i;
+                  JACOB0[ i_elem*params.nvar*p0nnz*params.nvar
+                        + row_loc*params.nvar*p0nnz + col_loc ] 
+                                       = ( perturbed_u0[k*params.nelem+elem_p]
+                                         - u0[k*params.nelem+elem_p] )/eps;
                 }
               }
             }
@@ -851,6 +856,22 @@ if ( p0_acc ) {
 
 } // numeric jacob eval
 
+/*
+        // TEMP- write magicA into file
+        fmagicA << "ite: " << ite << "\n";
+        for ( int j = 0; j < params.nelem*params.nvar*p0nnz*params.nvar; j++ )
+        {
+          int val;
+          if ( JACOB0[j] != 0 ) val = 8;
+          else val = 0;
+          if ( JACOB0[j] != JACOB0[j] ) val = 666666;
+          fmagicA << std::setw(13) << std::scientific << JACOB0[j] << " ";
+          if ( (j+1)%(p0nnz*params.nvar) == 0 ) fmagicA << "\n";
+          if ( (j+1)%(params.nvar*p0nnz*params.nvar) == 0 ) fmagicA << "\n";
+          //fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
+        }
+        fmagicA << "\n\n";
+*/
 
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
@@ -1025,8 +1046,9 @@ else { // numeric jacob
                   for ( int n = 0; n < params.nvar; n++ )
                   {
                     int jacob_loc = i_elem*params.nvar*p0nnz*params.nvar+l*params.nvar;
-                    rhs[k*params.nvar+j] -= JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
-                                           *old_delta_u[k*params.columnL+elem_loc+n*params.nelem];
+                    rhs[k*params.nvar+j] += JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
+                                           *old_delta_u[k*params.columnL+elem_loc+n*params.nelem]
+                                           /params.nse;
                   }
                 //}
               }
