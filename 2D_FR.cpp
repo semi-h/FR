@@ -114,6 +114,7 @@ int main(int argc, char** argv)
   bool analyticFJ = false;
 
   bool p0_acc = false;
+  bool newton_acc = false;
 
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-dt") == 0 ) params.dt = atof(argv[i+1]); }
@@ -147,6 +148,8 @@ int main(int argc, char** argv)
   { if ( strcmp(argv[i], "-exp") == 0 ) withMagicA = false; }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-p0acc") == 0 ) p0_acc = true; }
+  for ( int i = 0; i < argc; i++ )
+  { if ( strcmp(argv[i], "-newton_acc") == 0 ) newton_acc = true; }
   for ( int i = 0; i < argc; i++ )
   { if ( strcmp(argv[i], "-nRK") == 0 ) params.nRK = atoi(argv[i+1]); }
   for ( int i = 0; i < argc; i++ )
@@ -297,7 +300,9 @@ int main(int argc, char** argv)
       jacob_elems[elem_loc*p0nnz+4] = ((i_y-1)%params.nelem_y)*params.nelem_x+i_x; //top  |_|4|_|
     }
   }
-
+  //for ( int i = 0; i < params.nelem; i++ )
+  //{ for ( int j = 0; j < p0nnz; j++ ) std::cout << jacob_elems[i*p0nnz+j] << " ";
+  // std::cout << "\n"; }
 
   double *ptr_zero = new double [1]; ptr_zero[0] = 0;
   double *ptr_one = new double [1]; ptr_one[0] = 1;
@@ -615,9 +620,10 @@ int main(int argc, char** argv)
         u[j] = old_u[j];
         for ( int k = 0; k < i_RK+1; k++ )
         {
-          u[j] += butcher_a[i_RK*params.nRK+k]*ks[k][j]*params.dt;
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+k]*ks[k][j];
         }
         if ( p0_acc ) {old_delta_u[j] = 0; delta_u[j] = 0;} // zeroize the newton corrector array;
+        delta_u[j] = 0;
       }
 
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
@@ -843,7 +849,7 @@ if ( p0_acc ) {
 
 
       // DIRK
-      for ( int j = 0; j < params0.nelem*params0.nvar*p0nnz*params0.nvar; j++ )
+      for ( int j = 0; j < params.nelem*params.nvar*p0nnz*params.nvar; j++ )
       {
         JACOB0[j] *= params.dt*butcher_a[i_RK*params.nRK+i_RK];
       }
@@ -1047,7 +1053,7 @@ else { // numeric jacob
                   {
                     int jacob_loc = i_elem*params.nvar*p0nnz*params.nvar+l*params.nvar;
                     rhs[k*params.nvar+j] += JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
-                                           *old_delta_u[k*params.columnL+elem_loc+n*params.nelem]
+                                           *u[k*params.columnL+elem_loc+n*params.nelem]
                                            /params.nse;
                   }
                 //}
@@ -1087,6 +1093,7 @@ else { // numeric jacob
             ks[i_RK][k*params.columnL+i_elem+j*params.nelem] += rhs[k*params.nvar+j];
 
             if ( p0_acc ) delta_u[k*params.columnL+i_elem+j*params.nelem] = rhs[k*params.nvar+j];
+            delta_u[k*params.columnL+i_elem+j*params.nelem] = rhs[k*params.nvar+j];
 
             u[k*params.columnL+i_elem+j*params.nelem] = old_u[k*params.columnL+i_elem+j*params.nelem];
             for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
@@ -1101,8 +1108,179 @@ else { // numeric jacob
 
       }//for each element local implicit update
       ress = log10(sqrt(res[0]+res[1]+res[2]+res[3]));
-}
+} // with local magicA
 
+double coeff;
+if ( newton_acc && sub_ite != 0 ) {
+      // newton accelerator;
+      double golden = (1.+sqrt(5.))*0.5;
+      double golden_param[4];
+      golden_param[0] = 0; golden_param[1] = golden-1; golden_param[2] = 1; golden_param[3] = golden;
+      double golden_res[4] = {0};
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ ) 
+        ks[i_RK][j] -= delta_u[j]; // go back to one step before
+
+      //golden_res[2] = ress;
+      // get #2
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        u[j] = old_u[j];
+        for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
+        {
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+l]*ks[l][j];
+        }
+        // the last ks is not updates so add the Delta by multiplying it with the coeff
+        u[j] += params.dt*butcher_a[i_RK*params.nRK+i_RK]*golden_param[2]*delta_u[j];
+      }
+
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getCommonU(&params, u_face);
+      deriveGiven(&params, q_x, q_y, u, u, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getFlux(&params, u, q_x, q_y, f, g);
+      extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+      deriveGiven(&params, u, u, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+        golden_res[2] += pow((-ks[i_RK][j]-golden_param[2]*delta_u[j]-u[j]),2);
+      golden_res[2] = log10(sqrt(golden_res[2]));
+
+
+      // get #3 first, then continue with #1
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        u[j] = old_u[j];
+        for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
+        {
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+l]*ks[l][j];
+        }
+        // the last ks is not updates so add the Delta by multiplying it with the coeff
+        u[j] += params.dt*butcher_a[i_RK*params.nRK+i_RK]*golden_param[3]*delta_u[j];
+      }
+
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getCommonU(&params, u_face);
+      deriveGiven(&params, q_x, q_y, u, u, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getFlux(&params, u, q_x, q_y, f, g);
+      extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+      deriveGiven(&params, u, u, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+        golden_res[3] += pow((-ks[i_RK][j]-golden_param[3]*delta_u[j]-u[j]),2);
+      golden_res[3] = log10(sqrt(golden_res[3]));
+
+      //for ( int j = 0; j < params.nse*params.columnL; j++ ) golden_res[0] += u[j]*u[j];
+      //golden_res[0] = log10(sqrt(golden_res[0]));
+      //golden_res[0] = ress;
+      // get #0
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        u[j] = old_u[j];
+        for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
+        {
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+l]*ks[l][j];
+        }
+        // the last ks is not updates so add the Delta by multiplying it with the coeff
+        u[j] += params.dt*butcher_a[i_RK*params.nRK+i_RK]*golden_param[0]*delta_u[j];
+      }
+
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getCommonU(&params, u_face);
+      deriveGiven(&params, q_x, q_y, u, u, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+      extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getFlux(&params, u, q_x, q_y, f, g);
+      extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+      deriveGiven(&params, u, u, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+        golden_res[0] += pow((-ks[i_RK][j]-golden_param[0]*delta_u[j]-u[j]),2);
+      golden_res[0] = log10(sqrt(golden_res[0]));
+
+
+//std::cout << "\n";
+      int eval = 1;
+      while ( golden_param[3]-golden_param[0] > 0.01 )
+      {
+        //start with #1
+        //std::cout << "\n" << eval;
+        for ( int j = 0; j < params.nse*params.columnL; j++ )
+        {
+          u[j] = old_u[j];
+          for ( int l = 0; l < i_RK+1; l++ ) //from 0 to the current rk stage n
+          {
+            u[j] += params.dt*butcher_a[i_RK*params.nRK+l]*ks[l][j];
+          }
+          // the last ks is not updates so add the Delta by multiplying it with the coeff
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+i_RK]*golden_param[eval]*delta_u[j];
+        }
+
+        // now go forward
+        extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+        getCommonU(&params, u_face);
+        deriveGiven(&params, q_x, q_y, u, u, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+        extrapToFace(&params, u, u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+        extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+        extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+        getFlux(&params, u, q_x, q_y, f, g);
+        extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+        getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+        deriveGiven(&params, u, u, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+
+        golden_res[eval] = 0;
+        // check the residual 
+        for ( int j = 0; j < params.nse*params.columnL; j++ )
+          golden_res[eval] += pow((-ks[i_RK][j]-golden_param[eval]*delta_u[j]-u[j]),2);
+        golden_res[eval] = log10(sqrt(golden_res[eval]));
+//std::cout << eval << " par:";
+//for ( int j = 0; j < 4; j++ ) std::cout << " " << golden_param[j];
+//std::cout << "\n";
+//std::cout << eval << " res:";
+//for ( int j = 0; j < 4; j++ ) std::cout << " " << golden_res[j];
+//std::cout << "\n";
+        // compare residuals and pick the next interval;
+        if ( golden_res[1] > golden_res[2] )
+        {
+          // 1 becomes 0, 2 becomes 1, 3 stays, get a new 2
+          golden_param[0] = golden_param[1]; golden_res[0] = golden_res[1];
+          golden_param[1] = golden_param[2]; golden_res[1] = golden_res[2];
+          golden_param[2] = golden_param[0] + (golden_param[3]-golden_param[0])/golden;
+          eval = 2;
+        }
+        else
+        {
+          // 0 stays, get a new 1, 1 becomes 2, 2 becomes 3
+          golden_param[3] = golden_param[2]; golden_res[3] = golden_res[2];
+          golden_param[2] = golden_param[1]; golden_res[2] = golden_res[1];
+          golden_param[1] = golden_param[3] - (golden_param[3]-golden_param[0])/golden;
+          eval = 1;
+        }
+
+      }
+
+      coeff = (golden_param[0]+golden_param[3])/2;
+      for ( int j = 0; j < params.nse*params.columnL; j++ )
+      {
+        u[j] = old_u[j];
+        ks[i_RK][j] += coeff*delta_u[j];
+        for ( int l = 0; l < i_RK+1; l++ )
+        {
+          u[j] += params.dt*butcher_a[i_RK*params.nRK+l]*ks[l][j];
+        }
+        //u[j] += params.dt*butcher_a[i_RK*params.nRK+i_RK]*coeff*delta_u[j];
+      }
+      ress = (golden_res[1]+golden_res[2])/2;
+}
 
       conservation = 0;
       for ( int j = 0; j < params.nelem; j++ )
@@ -1121,11 +1299,11 @@ else { // numeric jacob
       }
 
 
-
       for ( int j = 0; j < params.nvar; j++ )
         std::cout << std::fixed << std::setprecision(3) << " " << std::setw(6) << log10(sqrt(res[j]));
-      std::cout << " rT= " << std::setw(6) << ress
-                << "  conservation:" << std::scientific << std::setw(11)
+      std::cout << " rT= " << std::setw(6) << ress;
+      if ( newton_acc ) std::cout << std::fixed << std::setprecision(3) << " alpha: " << coeff;
+      std::cout << "  cons:" << std::scientific << std::setw(11)
                 << conservation-CONSERVATION << "\n";
                 // << " " << std::fixed << std::setprecision(3) <<  log10(sqrt(resM)) << "\n";
 
