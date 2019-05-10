@@ -249,6 +249,9 @@ int main(int argc, char** argv)
   for ( int i = 0; i < params.nfe*params.columnL; i++ )
   { u_face[i] = 0; f_face[i] = 0; q_x_face[i] = 0; q_y_face[i] = 0; }
 
+  double *u_line;
+  u_line = new double [params.nse*params.columnL];
+
   double *delta_u, *old_delta_u;
   delta_u = new double [params.nse*params.columnL];
   old_delta_u = new double [params.nse*params.columnL];
@@ -629,8 +632,8 @@ int main(int argc, char** argv)
 ress = 10; res[0] = 10; res[1] = 10; res[2] = 10; res[3] = 10;
 for ( int sub_ite = 0; sub_ite < params.sub_ite; sub_ite++ )
 {
-      store_nsubite[ite*params.nRK+i_RK] = sub_ite+1;
       if ( ress < params.tol ) continue;
+      store_nsubite[ite*params.nRK+i_RK] = sub_ite+1;
       ress = 0; // if residual small enough exit sub ite loop
       res[0] = 0; res[1] = 0; res[2] = 0; res[3] = 0;
       std::cout << "    subIte" << std::setw(4) << sub_ite;
@@ -674,6 +677,27 @@ else{
       //for ( int j = 0; j < params.nse*params.columnL; j++ ) ks[i_RK][j] = u[j];
 
 if (!analyticFJ) {
+
+      for ( int j = 0; j < params.nse*params.columnL; j++ ) u_line[j] = u_curr[j];
+
+      extrapToFace(&params, u_line, u_line, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getCommonU(&params, u_face);
+      deriveGiven(&params, q_x, q_y, u_line, u_line, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+      extrapToFace(&params, u_line, u_line, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getFlux(&params, u_line, q_x, q_y, f, g);
+      extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
+      getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
+      for ( int j = 0; j < params.nse*params.columnL; j++ ) g[j] = 0;
+      for ( int j = 0; j < params.columnL; j++ )
+      {
+        for ( int k = 0; k < params.p_x+1; k++ ) f_face[k*params.columnL+j] = 0;
+        for ( int k = (params.p_x+1)+(params.p_y+1); k < 2*(params.p_x+1)+(params.p_y+1); k++ ) f_face[k*params.columnL+j] = 0;
+      }
+      deriveGiven(&params, u_line, u_line, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
+
+
       for ( int i = 0; i < params.nelem*params.nvar*params.nse*params.nvar*params.nse; i++ ) 
         JACOB[i] = 0;
       // perturb all the values like a checkerboard
@@ -700,26 +724,22 @@ if (!analyticFJ) {
               }
             }
             // call the residual with perturbed u vector
-            // we need u_face first
             extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
-            // then corrected u_face with the common u_I
             getCommonU(&params, u_face);
-            // know we can get the q_x and q_y
             deriveGiven(&params, q_x, q_y, perturbed_u, perturbed_u, u_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
-            // get u_face back
             extrapToFace(&params, perturbed_u, perturbed_u, u_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
-            // get q_x_face adn q_y_face
             extrapToFace(&params, q_x, q_x, q_x_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
             extrapToFace(&params, q_y, q_y, q_y_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
-            // get flux
             getFlux(&params, perturbed_u, q_x, q_y, f, g);
-            // get f_face
             extrapToFace(&params, f, g, f_face, lagrInterL_x, lagrInterR_x, lagrInterL_y, lagrInterR_y);
-            // get interface flux (both inviscid and viscous within the same func)
             getInterFlux(&params, f_face, u_face, q_x_face, q_y_face, u_hat_face);
-            // get the final result
+            for ( int j = 0; j < params.nse*params.columnL; j++ ) g[j] = 0;
+            for ( int j = 0; j < params.columnL; j++ )
+            {
+              for ( int k = 0; k < params.p_x+1; k++ ) f_face[k*params.columnL+j] = 0;
+              for ( int k = (params.p_x+1)+(params.p_y+1); k < 2*(params.p_x+1)+(params.p_y+1); k++ ) f_face[k*params.columnL+j] = 0;
+            }
             deriveGiven(&params, perturbed_u, perturbed_u, f, g, f_face, lagrDerivs_x, lagrDerivs_y, hL_x, hR_x, hL_y, hR_y);
-
 
             for ( int i_y = 0; i_y < params.nelem_y; i_y++ )
             {
@@ -740,7 +760,7 @@ if (!analyticFJ) {
                     JACOB[ i_elem*params.nvar*params.nse*params.nvar*params.nse
                          + row_loc*params.nvar*params.nse + col_loc ] 
                                          = ( perturbed_u[j*params.columnL+k*params.nelem+i_elem]
-                                           - u[j*params.columnL+k*params.nelem+i_elem] )/eps;
+                                           - u_line[j*params.columnL+k*params.nelem+i_elem] )/eps;
                   }
                 }
               }
@@ -758,23 +778,15 @@ if ( p0_acc ) {
         u0[j] /= params.nse;
       }
       extrapToFace(&params0, u0, u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-      // then corrected u_face with the common u_I
       getCommonU(&params0, u0_face);
-      // know we can get the q_x and q_y
       deriveGiven(&params0, q0_x, q0_y, u0, u0, u0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
-      // get u_face back
       extrapToFace(&params0, u0, u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-      // get q_x_face adn q_y_face
       extrapToFace(&params0, q0_x, q0_x, q0_x_face, ptr_one, ptr_one, ptr_one, ptr_one);
       extrapToFace(&params0, q0_y, q0_y, q0_y_face, ptr_one, ptr_one, ptr_one, ptr_one);
-      // get flux
       getFlux(&params0, u0, q0_x, q0_y, f0, g0);
-      // get f_face
       extrapToFace(&params0, f0, g0, f0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-      // get interface flux (both inviscid and viscous within the same func)
       getInterFlux(&params0, f0_face, u0_face, q0_x_face, q0_y_face, u_hat_face);
-      // get the final result
-       for ( int j = 0; j < params0.nse*params0.columnL; j++ ) u0_curr[j] = u0[j];
+       for ( int j = 0; j < params.columnL; j++ ) u0_curr[j] = u0[j];
       deriveGiven(&params0, u0, u0, f0, g0, f0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
 
 
@@ -797,24 +809,15 @@ if ( p0_acc ) {
             }
           }
           // call the residual with perturbed u vector
-          // we need u_face first
           extrapToFace(&params0, perturbed_u0, perturbed_u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-          // then corrected u_face with the common u_I
           getCommonU(&params0, u0_face);
-          // know we can get the q_x and q_y
           deriveGiven(&params0, q0_x, q0_y, perturbed_u0, perturbed_u0, u0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
-          // get u_face back
           extrapToFace(&params0, perturbed_u0, perturbed_u0, u0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-          // get q_x_face adn q_y_face
           extrapToFace(&params0, q0_x, q0_x, q0_x_face, ptr_one, ptr_one, ptr_one, ptr_one);
           extrapToFace(&params0, q0_y, q0_y, q0_y_face, ptr_one, ptr_one, ptr_one, ptr_one);
-          // get flux
           getFlux(&params0, perturbed_u0, q0_x, q0_y, f0, g0);
-          // get f_face
           extrapToFace(&params0, f0, g0, f0_face, ptr_one, ptr_one, ptr_one, ptr_one);
-          // get interface flux (both inviscid and viscous within the same func)
           getInterFlux(&params0, f0_face, u0_face, q0_x_face, q0_y_face, u_hat_face);
-          // get the final result
           deriveGiven(&params0, perturbed_u0, perturbed_u0, f0, g0, f0_face, ptr_zero, ptr_zero, ptr_hL, ptr_hR, ptr_hL, ptr_hR);
 
 
@@ -862,22 +865,6 @@ if ( p0_acc ) {
 
 } // numeric jacob eval
 
-/*
-        // TEMP- write magicA into file
-        fmagicA << "ite: " << ite << "\n";
-        for ( int j = 0; j < params.nelem*params.nvar*p0nnz*params.nvar; j++ )
-        {
-          int val;
-          if ( JACOB0[j] != 0 ) val = 8;
-          else val = 0;
-          if ( JACOB0[j] != JACOB0[j] ) val = 666666;
-          fmagicA << std::setw(13) << std::scientific << JACOB0[j] << " ";
-          if ( (j+1)%(p0nnz*params.nvar) == 0 ) fmagicA << "\n";
-          if ( (j+1)%(params.nvar*p0nnz*params.nvar) == 0 ) fmagicA << "\n";
-          //fmagicA << val << " "; if ( (j+1)%(params.nse*params.nvar) == 0 ) fmagicA << "\n";
-        }
-        fmagicA << "\n\n";
-*/
 
       for ( int j = 0; j < params.nse*params.columnL; j++ )
       {
@@ -1053,7 +1040,9 @@ else { // numeric jacob
                   {
                     int jacob_loc = i_elem*params.nvar*p0nnz*params.nvar+l*params.nvar;
                     rhs[k*params.nvar+j] += JACOB0[jacob_loc+j*p0nnz*params.nvar+n]
-                                           *u[k*params.columnL+elem_loc+n*params.nelem]
+                                           //*old_delta_u[k*params.columnL+elem_loc+n*params.nelem]
+                                           //*u[k*params.columnL+elem_loc+n*params.nelem]
+                                           *u0[elem_loc+n*params.nelem]
                                            /params.nse;
                   }
                 //}
@@ -2905,26 +2894,4 @@ void set_lagrangeInterCoeffs(int p, double *soln_coords, double **lagrInterL, do
   return;
 }
 
-
-void updateSolution( essential *params, double *u, double *f, double *g, double *f_face,
-                     double *A_lagrDeriv_x, double *A_lagrDeriv_y, double *A_corrector )
-{
-
-
-  //call blas for matrix matrix operations;
-  // u=f*A_lagrDeriv_x+g*A_lagrDeriv_y+f_face*A_corrector
-
-  //INFO = LAPACKE_dgesv(LAPACK_ROW_MAJOR,N,1,magicA,N,IPIV,rhs,1);
-
-//void 	cblas_dgemm (const CBLAS_LAYOUT layout, const CBLAS_TRANSPOSE TransA, const CBLAS_TRANSPOSE TransB, const int M, const int N, const int K, const double alpha, const double *A, const int lda, const double *B, const int ldb, const double beta, double *C, const int ldc)
-
-  int info;
-
-//  info = cblas_dgemm( CblasRowMajor, CblasNoTrans, CblasNoTrans,
-//                      params->nse, params->columnL*params->nvar, params->nse,
-//                      1.0, A_lagrDeriv_x, params->nse, f, params->nse,
-//                      0.0, u, params->nse );
-
-  return;
-}
 
